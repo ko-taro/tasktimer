@@ -1,0 +1,32 @@
+# Dependencies
+node_modules
+
+# Build output
+dist
+dist-ssr
+
+# Python
+__pycache__
+*.pyc
+.venv
+
+# Logs
+*.log
+npm-debug.log*
+
+# Environment
+*.local
+.env
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.idea
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# OS
+.DS_Store
