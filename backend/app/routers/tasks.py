@@ -1,20 +1,20 @@
-from __future__ import annotations
-
-import uuid
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
+
+from app.database import get_conn
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 
 
-class Task(BaseModel):
-    id: str = Field(default_factory=lambda: uuid.uuid4().hex[:8])
+class TaskResponse(BaseModel):
+    id: str
     title: str
-    category: str = "medium"
-    completed: bool = False
-    pomodoro_count: int = 0
-    total_seconds: int = 0
+    category: str
+    completed: bool
+    pomodoro_count: int
+    total_seconds: int
 
 
 class TaskCreate(BaseModel):
@@ -30,43 +30,82 @@ class TaskUpdate(BaseModel):
     total_seconds: int | None = None
 
 
-# In-memory mock data
-_tasks: list[Task] = [
-    Task(id="1", title="プロジェクト計画を作成する", category="high", completed=True, pomodoro_count=2, total_seconds=3000),
-    Task(id="2", title="API設計書を書く", category="high", pomodoro_count=1, total_seconds=1500),
-    Task(id="3", title="データベーススキーマを設計する", category="medium"),
-    Task(id="4", title="認証機能を実装する", category="medium"),
-    Task(id="5", title="テストを書く", category="low"),
-]
+def _row_to_task(row: Any) -> TaskResponse:
+    return TaskResponse(
+        id=str(row["id"]),
+        title=row["title"],
+        category=row["category_key"],
+        completed=row["completed"],
+        pomodoro_count=row["pomodoro_count"],
+        total_seconds=row["total_seconds"],
+    )
 
 
 @router.get("")
-def list_tasks() -> list[Task]:
-    return _tasks
+def list_tasks() -> list[TaskResponse]:
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("SELECT * FROM tasks ORDER BY created_at")
+        return [_row_to_task(row) for row in cur.fetchall()]
 
 
 @router.post("", status_code=201)
-def create_task(body: TaskCreate) -> Task:
-    task = Task(title=body.title, category=body.category)
-    _tasks.append(task)
-    return task
+def create_task(body: TaskCreate) -> TaskResponse:
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+                INSERT INTO tasks (title, category_key)
+                VALUES (%s, %s)
+                RETURNING *
+            """,
+            (body.title, body.category),
+        )
+        row = cur.fetchone()
+        conn.commit()
+        return _row_to_task(row)
 
 
 @router.patch("/{task_id}")
-def update_task(task_id: str, body: TaskUpdate) -> Task:
-    for task in _tasks:
-        if task.id == task_id:
-            update_data = body.model_dump(exclude_unset=True)
-            for key, value in update_data.items():
-                setattr(task, key, value)
-            return task
-    raise HTTPException(status_code=404, detail="Task not found")
+def update_task(task_id: str, body: TaskUpdate) -> TaskResponse:
+    update_data = body.model_dump(exclude_unset=True)
+    if not update_data:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    # category -> category_key
+    if "category" in update_data:
+        update_data["category_key"] = update_data.pop("category")
+
+    set_clause = ", ".join(f"{k} = %s" for k in update_data)
+    values = list(update_data.values())
+    values.append(task_id)
+
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            f"""
+                UPDATE tasks
+                SET {set_clause},
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s
+                RETURNING *
+            """,
+            values,
+        )
+        row = cur.fetchone()
+        conn.commit()
+        if not row:
+            raise HTTPException(status_code=404, detail="Task not found")
+        return _row_to_task(row)
 
 
 @router.delete("/{task_id}", status_code=204, response_model=None)
 def delete_task(task_id: str) -> None:
-    for i, task in enumerate(_tasks):
-        if task.id == task_id:
-            _tasks.pop(i)
-            return
-    raise HTTPException(status_code=404, detail="Task not found")
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            DELETE FROM tasks
+            WHERE id = %s
+        """,
+            (task_id,),
+        )
+        conn.commit()
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Task not found")
