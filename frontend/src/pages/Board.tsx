@@ -20,12 +20,22 @@ import DeleteIcon from "@mui/icons-material/Delete";
 import DragIndicatorIcon from "@mui/icons-material/DragIndicator";
 import {
   DndContext,
+  DragOverlay,
   PointerSensor,
+  pointerWithin,
   useSensor,
   useSensors,
   type DragEndEvent,
+  type DragOverEvent,
+  type DragStartEvent,
 } from "@dnd-kit/core";
-import { useDraggable, useDroppable } from "@dnd-kit/core";
+import { useDroppable } from "@dnd-kit/core";
+import {
+  SortableContext,
+  useSortable,
+  verticalListSortingStrategy,
+  arrayMove,
+} from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 
 type Project = {
@@ -95,12 +105,19 @@ function DraggableCard({
   const [editingTitle, setEditingTitle] = useState("");
   const [editingDescription, setEditingDescription] = useState("");
 
-  const { attributes, listeners, setNodeRef, transform, isDragging } =
-    useDraggable({ id: task.id });
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: task.id });
 
   const style = {
-    transform: CSS.Translate.toString(transform),
-    opacity: isDragging ? 0.3 : 1,
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0 : 1,
   };
 
   const handleExpand = () => {
@@ -278,6 +295,8 @@ export default function BoardPage() {
   const [addingTo, setAddingTo] = useState<string | null>(null);
   const [newTaskTitle, setNewTaskTitle] = useState("");
   const [deletedTask, setDeletedTask] = useState<Task | null>(null);
+  const [activeTask, setActiveTask] = useState<Task | null>(null);
+  const [originalBoardId, setOriginalBoardId] = useState<string | null>(null);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -396,26 +415,141 @@ export default function BoardPage() {
       .catch((err) => setError(err.message));
   };
 
-  const handleDragEnd = (event: DragEndEvent) => {
+  const handleDragStart = (event: DragStartEvent) => {
+    const task = tasks.find((t) => t.id === event.active.id);
+    setActiveTask(task ?? null);
+    setOriginalBoardId(task?.board_id ?? null);
+  };
+
+  const handleDragOver = (event: DragOverEvent) => {
     const { active, over } = event;
     if (!over) return;
 
-    const taskId = active.id as string;
-    const newBoardId = over.id as string;
-    const task = tasks.find((t) => t.id === taskId);
-    if (!task || task.board_id === newBoardId) return;
+    const activeId = active.id as string;
+    const overId = over.id as string;
 
-    setTasks((prev) =>
-      prev.map((t) =>
-        t.id === taskId ? { ...t, board_id: newBoardId } : t
-      )
-    );
+    const activeTask = tasks.find((t) => t.id === activeId);
+    if (!activeTask) return;
 
-    fetch(`/api/tasks/${taskId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ board_id: newBoardId }),
-    }).catch((err) => setError(err.message));
+    // over がボードかタスクかを判定
+    const overTask = tasks.find((t) => t.id === overId);
+    const overBoard = boards.find((b) => b.id === overId);
+
+    let targetBoardId: string;
+    if (overTask) {
+      targetBoardId = overTask.board_id;
+    } else if (overBoard) {
+      targetBoardId = overBoard.id;
+    } else {
+      return;
+    }
+
+    // 異なるボードへ移動する場合、タスクのboard_idを一時的に更新
+    if (activeTask.board_id !== targetBoardId) {
+      setTasks((prev) =>
+        prev.map((t) =>
+          t.id === activeId ? { ...t, board_id: targetBoardId } : t
+        )
+      );
+    }
+  };
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    setActiveTask(null);
+    const sourceBoardId = originalBoardId;
+    setOriginalBoardId(null);
+
+    const { active, over } = event;
+    if (!over || !sourceBoardId) {
+      // ドラッグがキャンセルされた場合、board_idを元に戻す
+      if (sourceBoardId) {
+        const activeId = active.id as string;
+        setTasks((prev) =>
+          prev.map((t) =>
+            t.id === activeId ? { ...t, board_id: sourceBoardId } : t
+          )
+        );
+      }
+      return;
+    }
+
+    const activeId = active.id as string;
+    const overId = over.id as string;
+
+    // over がボードかタスクかを判定
+    const overTask = tasks.find((t) => t.id === overId);
+    const overBoard = boards.find((b) => b.id === overId);
+
+    let targetBoardId: string;
+    let newIndex: number;
+
+    if (overTask) {
+      // タスクの上にドロップ
+      targetBoardId = overTask.board_id;
+      const boardTasks = tasks
+        .filter((t) => t.board_id === targetBoardId && t.id !== activeId)
+        .sort((a, b) => a.sort_order - b.sort_order);
+      const overIndex = boardTasks.findIndex((t) => t.id === overId);
+      newIndex = overIndex === -1 ? boardTasks.length : overIndex;
+    } else if (overBoard) {
+      // ボードの空き領域にドロップ
+      targetBoardId = overBoard.id;
+      const boardTasks = tasks.filter(
+        (t) => t.board_id === targetBoardId && t.id !== activeId
+      );
+      newIndex = boardTasks.length; // 末尾に追加
+    } else {
+      return;
+    }
+
+    // 同じボード内での移動
+    if (sourceBoardId === targetBoardId) {
+      const boardTasks = tasks
+        .filter((t) => t.board_id === targetBoardId)
+        .sort((a, b) => a.sort_order - b.sort_order);
+      const oldIndex = boardTasks.findIndex((t) => t.id === activeId);
+      const overIndex = boardTasks.findIndex((t) => t.id === overId);
+      if (oldIndex === overIndex || overIndex === -1) return;
+
+      const reordered = arrayMove(boardTasks, oldIndex, overIndex);
+      const updatedTasks = tasks.map((t) => {
+        if (t.board_id !== targetBoardId) return t;
+        const idx = reordered.findIndex((r) => r.id === t.id);
+        return { ...t, sort_order: idx };
+      });
+      setTasks(updatedTasks);
+
+      // API呼び出し
+      fetch(`/api/tasks/${activeId}/reorder`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ board_id: targetBoardId, sort_order: overIndex }),
+      }).catch((err) => setError(err.message));
+    } else {
+      // 別ボードへの移動
+      const updatedTasks = tasks.map((t) => {
+        if (t.id === activeId) {
+          return { ...t, board_id: targetBoardId, sort_order: newIndex };
+        }
+        // 移動先ボードでnewIndex以降のタスクはsort_orderを+1
+        if (
+          t.board_id === targetBoardId &&
+          t.id !== activeId &&
+          t.sort_order >= newIndex
+        ) {
+          return { ...t, sort_order: t.sort_order + 1 };
+        }
+        return t;
+      });
+      setTasks(updatedTasks);
+
+      // API呼び出し
+      fetch(`/api/tasks/${activeId}/reorder`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ board_id: targetBoardId, sort_order: newIndex }),
+      }).catch((err) => setError(err.message));
+    }
   };
 
   useEffect(() => {
@@ -446,7 +580,13 @@ export default function BoardPage() {
 
   return (
     <>
-      <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
+      <DndContext
+        sensors={sensors}
+        collisionDetection={pointerWithin}
+        onDragStart={handleDragStart}
+        onDragOver={handleDragOver}
+        onDragEnd={handleDragEnd}
+      >
         <Box
           sx={{
             display: "grid",
@@ -455,7 +595,9 @@ export default function BoardPage() {
           }}
         >
           {boards.map((board) => {
-            const boardTasks = tasks.filter((t) => t.board_id === board.id);
+            const boardTasks = tasks
+              .filter((t) => t.board_id === board.id)
+              .sort((a, b) => a.sort_order - b.sort_order);
             return (
               <DroppableColumn key={board.id} board={board}>
                 <Box sx={{ display: "flex", alignItems: "center", mb: 2 }}>
@@ -514,22 +656,67 @@ export default function BoardPage() {
                     </CardContent>
                   </Card>
                 )}
-                <Stack spacing={1.5}>
-                  {boardTasks.map((task) => (
-                    <DraggableCard
-                      key={task.id}
-                      task={task}
-                      onUpdateTitle={handleUpdateTitle}
-                      onUpdateDescription={handleUpdateDescription}
-                      onToggleCompleted={handleToggleCompleted}
-                      onDelete={handleDelete}
-                    />
-                  ))}
-                </Stack>
+                <SortableContext
+                  items={boardTasks.map((t) => t.id)}
+                  strategy={verticalListSortingStrategy}
+                >
+                  <Stack spacing={1.5}>
+                    {boardTasks.map((task) => (
+                      <DraggableCard
+                        key={task.id}
+                        task={task}
+                        onUpdateTitle={handleUpdateTitle}
+                        onUpdateDescription={handleUpdateDescription}
+                        onToggleCompleted={handleToggleCompleted}
+                        onDelete={handleDelete}
+                      />
+                    ))}
+                  </Stack>
+                </SortableContext>
               </DroppableColumn>
             );
           })}
         </Box>
+        <DragOverlay>
+          {activeTask && (
+            <Card sx={{ borderRadius: 1.5, boxShadow: 4, opacity: 0.9 }}>
+              <CardContent sx={{ py: 1.5, "&:last-child": { pb: 1.5 } }}>
+                <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                  <IconButton size="small" sx={{ p: 0, flexShrink: 0 }}>
+                    {activeTask.completed ? (
+                      <CheckCircleIcon color="success" fontSize="small" />
+                    ) : (
+                      <RadioButtonUncheckedIcon
+                        fontSize="small"
+                        sx={{ color: "text.secondary" }}
+                      />
+                    )}
+                  </IconButton>
+                  <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, flex: 1, minWidth: 0 }}>
+                    {activeTask.project && (
+                      <Chip
+                        label={activeTask.project.short_name}
+                        size="small"
+                        sx={{
+                          height: 20,
+                          fontSize: "0.7rem",
+                          flexShrink: 0,
+                          ...(activeTask.project.color && {
+                            bgcolor: activeTask.project.color,
+                            color: "white",
+                          }),
+                        }}
+                      />
+                    )}
+                    <Typography variant="body1" noWrap>
+                      {activeTask.title}
+                    </Typography>
+                  </Box>
+                </Box>
+              </CardContent>
+            </Card>
+          )}
+        </DragOverlay>
       </DndContext>
       <Snackbar
         open={deletedTask !== null}

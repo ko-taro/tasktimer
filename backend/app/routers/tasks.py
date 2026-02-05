@@ -206,6 +206,98 @@ def update_task(task_id: str, body: TaskUpdate) -> TaskResponse:
         return _row_to_task(row)
 
 
+class TaskReorder(BaseModel):
+    board_id: str
+    sort_order: int
+
+
+@router.post("/{task_id}/reorder")
+def reorder_task(task_id: str, body: TaskReorder) -> TaskResponse:
+    with get_conn() as conn, conn.cursor() as cur:
+        # 現在のタスク情報を取得
+        cur.execute(
+            "SELECT board_id, sort_order FROM board_tasks WHERE task_id = %s",
+            (task_id,),
+        )
+        current = cur.fetchone()
+        if not current:
+            raise HTTPException(status_code=404, detail="Task not found")
+
+        old_board_id = str(current["board_id"])
+        old_sort_order = current["sort_order"]
+        new_board_id = body.board_id
+        new_sort_order = body.sort_order
+
+        if old_board_id == new_board_id:
+            # 同じボード内での移動
+            if old_sort_order < new_sort_order:
+                # 下に移動: old_sort_order < x <= new_sort_order のタスクを -1
+                cur.execute(
+                    """
+                    UPDATE board_tasks
+                    SET sort_order = sort_order - 1
+                    WHERE board_id = %s AND sort_order > %s AND sort_order <= %s
+                    """,
+                    (new_board_id, old_sort_order, new_sort_order),
+                )
+            elif old_sort_order > new_sort_order:
+                # 上に移動: new_sort_order <= x < old_sort_order のタスクを +1
+                cur.execute(
+                    """
+                    UPDATE board_tasks
+                    SET sort_order = sort_order + 1
+                    WHERE board_id = %s AND sort_order >= %s AND sort_order < %s
+                    """,
+                    (new_board_id, new_sort_order, old_sort_order),
+                )
+        else:
+            # 別ボードへの移動
+            # 元ボードで old_sort_order より後のタスクを -1
+            cur.execute(
+                """
+                UPDATE board_tasks
+                SET sort_order = sort_order - 1
+                WHERE board_id = %s AND sort_order > %s
+                """,
+                (old_board_id, old_sort_order),
+            )
+            # 新ボードで new_sort_order 以降のタスクを +1
+            cur.execute(
+                """
+                UPDATE board_tasks
+                SET sort_order = sort_order + 1
+                WHERE board_id = %s AND sort_order >= %s
+                """,
+                (new_board_id, new_sort_order),
+            )
+
+        # タスク自体の board_id と sort_order を更新
+        cur.execute(
+            """
+            UPDATE board_tasks
+            SET board_id = %s, sort_order = %s
+            WHERE task_id = %s
+            """,
+            (new_board_id, new_sort_order, task_id),
+        )
+
+        conn.commit()
+
+        # 更新後のデータを取得して返す
+        cur.execute("""
+            SELECT t.id, t.title, t.description, t.completed,
+                   bt.board_id, bt.sort_order,
+                   p.id AS project_id, p.name AS project_name,
+                   p.short_name AS project_short_name, p.color AS project_color
+            FROM tasks t
+            JOIN board_tasks bt ON t.id = bt.task_id
+            LEFT JOIN projects p ON t.project_id = p.id
+            WHERE t.id = %s
+        """, (task_id,))
+        row = cur.fetchone()
+        return _row_to_task(row)
+
+
 @router.delete("/{task_id}", status_code=204, response_model=None)
 def delete_task(task_id: str) -> None:
     with get_conn() as conn, conn.cursor() as cur:
