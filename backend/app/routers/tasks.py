@@ -18,6 +18,7 @@ class ProjectInfo(BaseModel):
 class TaskResponse(BaseModel):
     id: str
     title: str
+    description: str | None
     board_id: str
     sort_order: int
     completed: bool
@@ -26,12 +27,14 @@ class TaskResponse(BaseModel):
 
 class TaskCreate(BaseModel):
     title: str
+    description: str | None = None
     board_id: str
     project_id: str | None = None
 
 
 class TaskUpdate(BaseModel):
     title: str | None = None
+    description: str | None = None
     board_id: str | None = None
     sort_order: int | None = None
     completed: bool | None = None
@@ -50,6 +53,7 @@ def _row_to_task(row: Any) -> TaskResponse:
     return TaskResponse(
         id=str(row["id"]),
         title=row["title"],
+        description=row["description"],
         board_id=str(row["board_id"]),
         sort_order=row["sort_order"],
         completed=row["completed"],
@@ -61,7 +65,7 @@ def _row_to_task(row: Any) -> TaskResponse:
 def list_tasks() -> list[TaskResponse]:
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute("""
-            SELECT t.id, t.title, t.completed,
+            SELECT t.id, t.title, t.description, t.completed,
                    bt.board_id, bt.sort_order,
                    p.id AS project_id, p.name AS project_name,
                    p.short_name AS project_short_name, p.color AS project_color
@@ -92,8 +96,8 @@ def create_task(body: TaskCreate) -> TaskResponse:
 
         # タスクを作成
         cur.execute(
-            "INSERT INTO tasks (title, project_id) VALUES (%s, %s) RETURNING *",
-            (body.title, body.project_id),
+            "INSERT INTO tasks (title, description, project_id) VALUES (%s, %s, %s) RETURNING *",
+            (body.title, body.description, body.project_id),
         )
         task_row = cur.fetchone()
 
@@ -123,6 +127,7 @@ def create_task(body: TaskCreate) -> TaskResponse:
         return TaskResponse(
             id=str(task_row["id"]),
             title=task_row["title"],
+            description=task_row["description"],
             board_id=body.board_id,
             sort_order=next_order,
             completed=task_row["completed"],
@@ -138,7 +143,7 @@ def update_task(task_id: str, body: TaskUpdate) -> TaskResponse:
 
     with get_conn() as conn, conn.cursor() as cur:
         # tasks テーブルの更新
-        task_fields = {k: v for k, v in update_data.items() if k in ("title", "completed", "project_id")}
+        task_fields = {k: v for k, v in update_data.items() if k in ("title", "description", "completed", "project_id")}
         if task_fields:
             set_clause = ", ".join(f"{k} = %s" for k in task_fields)
             values = list(task_fields.values())
@@ -186,7 +191,7 @@ def update_task(task_id: str, body: TaskUpdate) -> TaskResponse:
 
         # 更新後のデータを取得して返す
         cur.execute("""
-            SELECT t.id, t.title, t.completed,
+            SELECT t.id, t.title, t.description, t.completed,
                    bt.board_id, bt.sort_order,
                    p.id AS project_id, p.name AS project_name,
                    p.short_name AS project_short_name, p.color AS project_color

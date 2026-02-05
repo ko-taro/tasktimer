@@ -5,6 +5,7 @@ import {
   Card,
   CardContent,
   Chip,
+  ClickAwayListener,
   IconButton,
   Paper,
   Snackbar,
@@ -16,14 +17,13 @@ import AddIcon from "@mui/icons-material/Add";
 import RadioButtonUncheckedIcon from "@mui/icons-material/RadioButtonUnchecked";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import DeleteIcon from "@mui/icons-material/Delete";
+import DragIndicatorIcon from "@mui/icons-material/DragIndicator";
 import {
   DndContext,
-  DragOverlay,
   PointerSensor,
   useSensor,
   useSensors,
   type DragEndEvent,
-  type DragStartEvent,
 } from "@dnd-kit/core";
 import { useDraggable, useDroppable } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
@@ -38,6 +38,7 @@ type Project = {
 type Task = {
   id: string;
   title: string;
+  description: string | null;
   board_id: string;
   sort_order: number;
   completed: boolean;
@@ -80,16 +81,19 @@ function DroppableColumn({
 function DraggableCard({
   task,
   onUpdateTitle,
+  onUpdateDescription,
   onToggleCompleted,
   onDelete,
 }: {
   task: Task;
   onUpdateTitle: (taskId: string, title: string) => void;
+  onUpdateDescription: (taskId: string, description: string) => void;
   onToggleCompleted: (task: Task) => void;
   onDelete: (task: Task) => void;
 }) {
-  const [isEditing, setIsEditing] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(false);
   const [editingTitle, setEditingTitle] = useState("");
+  const [editingDescription, setEditingDescription] = useState("");
 
   const { attributes, listeners, setNodeRef, transform, isDragging } =
     useDraggable({ id: task.id });
@@ -99,31 +103,57 @@ function DraggableCard({
     opacity: isDragging ? 0.3 : 1,
   };
 
-  const commitEdit = () => {
-    setIsEditing(false);
+  const handleExpand = () => {
+    if (!isDragging && !isExpanded) {
+      setIsExpanded(true);
+      setEditingTitle(task.title);
+      setEditingDescription(task.description ?? "");
+    }
+  };
+
+  const handleCollapse = () => {
     const title = editingTitle.trim();
     if (title && title !== task.title) {
       onUpdateTitle(task.id, title);
     }
-  };
-
-  const handleTitleClick = () => {
-    // ドラッグ中でなければ編集モードに
-    if (!isDragging) {
-      setIsEditing(true);
-      setEditingTitle(task.title);
+    const description = editingDescription.trim();
+    if (description !== (task.description ?? "")) {
+      onUpdateDescription(task.id, description);
     }
+    setIsExpanded(false);
   };
 
-  return (
+  // 展開時：ハンドルのみでドラッグ、非展開時：カード全体でドラッグ
+  const cardListeners = isExpanded ? {} : listeners;
+  const handleListeners = isExpanded ? listeners : {};
+
+  const cardElement = (
     <Card
       ref={setNodeRef}
-      sx={{ borderRadius: 1.5, cursor: "grab", ...style }}
-      {...listeners}
+      sx={{
+        borderRadius: 1.5,
+        cursor: isExpanded ? "default" : "grab",
+        ...style,
+      }}
+      {...cardListeners}
       {...attributes}
     >
       <CardContent sx={{ py: 1.5, "&:last-child": { pb: 1.5 } }}>
         <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+          {isExpanded && (
+            <Box
+              {...handleListeners}
+              sx={{
+                cursor: "grab",
+                display: "flex",
+                alignItems: "center",
+                color: "text.disabled",
+                flexShrink: 0,
+              }}
+            >
+              <DragIndicatorIcon fontSize="small" />
+            </Box>
+          )}
           <IconButton
             size="small"
             onClick={(e) => {
@@ -141,7 +171,7 @@ function DraggableCard({
               />
             )}
           </IconButton>
-          {isEditing ? (
+          {isExpanded ? (
             <TextField
               autoFocus
               fullWidth
@@ -150,10 +180,8 @@ function DraggableCard({
               value={editingTitle}
               onChange={(e) => setEditingTitle(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter") commitEdit();
-                if (e.key === "Escape") setIsEditing(false);
+                if (e.key === "Escape") handleCollapse();
               }}
-              onBlur={commitEdit}
               onClick={(e) => e.stopPropagation()}
               onPointerDown={(e) => e.stopPropagation()}
             />
@@ -166,7 +194,7 @@ function DraggableCard({
                 flex: 1,
                 minWidth: 0,
               }}
-              onClick={handleTitleClick}
+              onClick={handleExpand}
             >
               {task.project && (
                 <Chip
@@ -210,35 +238,37 @@ function DraggableCard({
             <DeleteIcon fontSize="small" sx={{ color: "text.disabled" }} />
           </IconButton>
         </Box>
-      </CardContent>
-    </Card>
-  );
-}
-
-function TaskCardOverlay({ task }: { task: Task }) {
-  return (
-    <Card sx={{ borderRadius: 1.5, boxShadow: 6, width: 300 }}>
-      <CardContent sx={{ py: 1.5, "&:last-child": { pb: 1.5 } }}>
-        <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
-          {task.project && (
-            <Chip
-              label={task.project.short_name}
+        {isExpanded && (
+          <Box sx={{ mt: 1.5, pl: 4.5 }}>
+            <TextField
+              fullWidth
+              multiline
+              minRows={2}
               size="small"
-              sx={{
-                height: 20,
-                fontSize: "0.7rem",
-                ...(task.project.color && {
-                  bgcolor: task.project.color,
-                  color: "white",
-                }),
+              placeholder="詳細を入力..."
+              value={editingDescription}
+              onChange={(e) => setEditingDescription(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") handleCollapse();
               }}
+              onClick={(e) => e.stopPropagation()}
+              onPointerDown={(e) => e.stopPropagation()}
             />
-          )}
-          <Typography variant="body1">{task.title}</Typography>
-        </Box>
+          </Box>
+        )}
       </CardContent>
     </Card>
   );
+
+  if (isExpanded) {
+    return (
+      <ClickAwayListener onClickAway={handleCollapse}>
+        {cardElement}
+      </ClickAwayListener>
+    );
+  }
+
+  return cardElement;
 }
 
 export default function BoardPage() {
@@ -248,7 +278,6 @@ export default function BoardPage() {
   const [addingTo, setAddingTo] = useState<string | null>(null);
   const [newTaskTitle, setNewTaskTitle] = useState("");
   const [deletedTask, setDeletedTask] = useState<Task | null>(null);
-  const [activeTask, setActiveTask] = useState<Task | null>(null);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -287,6 +316,24 @@ export default function BoardPage() {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ title }),
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then((updated: Task) => {
+        setTasks((prev) =>
+          prev.map((t) => (t.id === updated.id ? updated : t))
+        );
+      })
+      .catch((err) => setError(err.message));
+  };
+
+  const handleUpdateDescription = (taskId: string, description: string) => {
+    fetch(`/api/tasks/${taskId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ description: description || null }),
     })
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -349,13 +396,7 @@ export default function BoardPage() {
       .catch((err) => setError(err.message));
   };
 
-  const handleDragStart = (event: DragStartEvent) => {
-    const task = tasks.find((t) => t.id === event.active.id);
-    setActiveTask(task ?? null);
-  };
-
   const handleDragEnd = (event: DragEndEvent) => {
-    setActiveTask(null);
     const { active, over } = event;
     if (!over) return;
 
@@ -405,11 +446,7 @@ export default function BoardPage() {
 
   return (
     <>
-      <DndContext
-        sensors={sensors}
-        onDragStart={handleDragStart}
-        onDragEnd={handleDragEnd}
-      >
+      <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
         <Box
           sx={{
             display: "grid",
@@ -483,6 +520,7 @@ export default function BoardPage() {
                       key={task.id}
                       task={task}
                       onUpdateTitle={handleUpdateTitle}
+                      onUpdateDescription={handleUpdateDescription}
                       onToggleCompleted={handleToggleCompleted}
                       onDelete={handleDelete}
                     />
@@ -492,9 +530,6 @@ export default function BoardPage() {
             );
           })}
         </Box>
-        <DragOverlay>
-          {activeTask ? <TaskCardOverlay task={activeTask} /> : null}
-        </DragOverlay>
       </DndContext>
       <Snackbar
         open={deletedTask !== null}
