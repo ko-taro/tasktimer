@@ -170,12 +170,14 @@ function DraggableCard({
   onUpdateDescription,
   onToggleCompleted,
   onDelete,
+  showIndicator,
 }: {
   task: Task;
   onUpdateTitle: (taskId: string, title: string) => void;
   onUpdateDescription: (taskId: string, description: string) => void;
   onToggleCompleted: (task: Task) => void;
   onDelete: (task: Task) => void;
+  showIndicator?: "before" | "after" | null;
 }) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [editingTitle, setEditingTitle] = useState("");
@@ -194,6 +196,16 @@ function DraggableCard({
     transform: CSS.Transform.toString(transform),
     transition,
     opacity: isDragging ? 0 : 1,
+  };
+
+  const indicatorStyle = {
+    position: "absolute" as const,
+    left: 0,
+    right: 0,
+    height: 3,
+    bgcolor: "primary.main",
+    borderRadius: 1,
+    zIndex: 10,
   };
 
   const handleExpand = () => {
@@ -221,16 +233,20 @@ function DraggableCard({
   const handleListeners = isExpanded ? listeners : {};
 
   const cardElement = (
-    <Card
-      ref={setNodeRef}
-      sx={{
-        borderRadius: 1.5,
-        cursor: isExpanded ? "default" : "grab",
-        ...style,
-      }}
-      {...cardListeners}
-      {...attributes}
-    >
+    <Box sx={{ position: "relative" }}>
+      {showIndicator === "before" && (
+        <Box sx={{ ...indicatorStyle, top: -6 }} />
+      )}
+      <Card
+        ref={setNodeRef}
+        sx={{
+          borderRadius: 1.5,
+          cursor: isExpanded ? "default" : "grab",
+          ...style,
+        }}
+        {...cardListeners}
+        {...attributes}
+      >
       <CardContent sx={{ py: 1.5, "&:last-child": { pb: 1.5 } }}>
         <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
           {isExpanded && (
@@ -351,6 +367,10 @@ function DraggableCard({
         )}
       </CardContent>
     </Card>
+      {showIndicator === "after" && (
+        <Box sx={{ ...indicatorStyle, bottom: -6 }} />
+      )}
+    </Box>
   );
 
   if (isExpanded) {
@@ -376,6 +396,10 @@ export default function BoardPage() {
   const [originalBoardId, setOriginalBoardId] = useState<string | null>(null);
   const [boardDropIndicator, setBoardDropIndicator] = useState<{
     boardId: string;
+    position: "before" | "after";
+  } | null>(null);
+  const [taskDropIndicator, setTaskDropIndicator] = useState<{
+    taskId: string;
     position: "before" | "after";
   } | null>(null);
 
@@ -518,6 +542,7 @@ export default function BoardPage() {
     const { active, over } = event;
     if (!over) {
       setBoardDropIndicator(null);
+      setTaskDropIndicator(null);
       return;
     }
 
@@ -526,6 +551,7 @@ export default function BoardPage() {
 
     // ボードをドラッグ中
     if (boards.find((b) => b.id === activeId)) {
+      setTaskDropIndicator(null);
       // droppable-プレフィックスを除去
       if (overId.startsWith("droppable-")) {
         overId = overId.replace("droppable-", "");
@@ -544,8 +570,14 @@ export default function BoardPage() {
       return;
     }
 
+    // タスクをドラッグ中
+    setBoardDropIndicator(null);
+
     const activeTaskItem = tasks.find((t) => t.id === activeId);
-    if (!activeTaskItem) return;
+    if (!activeTaskItem) {
+      setTaskDropIndicator(null);
+      return;
+    }
 
     // over がボードかタスクかを判定（droppable-プレフィックスを考慮）
     const overTask = tasks.find((t) => t.id === overId);
@@ -554,14 +586,31 @@ export default function BoardPage() {
       : null;
     const overBoard = overBoardId
       ? boards.find((b) => b.id === overBoardId)
-      : boards.find((b) => b.id === overId);
+      : null;
 
     let targetBoardId: string;
     if (overTask) {
       targetBoardId = overTask.board_id;
+      // ドラッグ中のタスクと違うタスクならインジケーターを表示
+      if (activeId !== overId) {
+        setTaskDropIndicator({ taskId: overId, position: "before" });
+      } else {
+        setTaskDropIndicator(null);
+      }
     } else if (overBoard) {
       targetBoardId = overBoard.id;
+      // ボードの空き領域にドラッグした場合、最後のタスクの下にインジケーターを表示
+      const boardTasks = tasks
+        .filter((t) => t.id !== activeId && t.board_id === targetBoardId)
+        .sort((a, b) => a.sort_order - b.sort_order);
+      if (boardTasks.length > 0) {
+        const lastTask = boardTasks[boardTasks.length - 1];
+        setTaskDropIndicator({ taskId: lastTask.id, position: "after" });
+      } else {
+        setTaskDropIndicator(null);
+      }
     } else {
+      setTaskDropIndicator(null);
       return;
     }
 
@@ -610,6 +659,7 @@ export default function BoardPage() {
 
     // タスクのドラッグ終了
     setActiveTask(null);
+    setTaskDropIndicator(null);
     const sourceBoardId = originalBoardId;
     setOriginalBoardId(null);
 
@@ -634,25 +684,34 @@ export default function BoardPage() {
       : null;
     const overBoard = overBoardId
       ? boards.find((b) => b.id === overBoardId)
-      : boards.find((b) => b.id === overId);
+      : null;
 
     let targetBoardId: string;
     let newIndex: number;
 
     if (overTask) {
       // タスクの上にドロップ
-      targetBoardId = overTask.board_id;
+      // overTaskのboard_idではなく、originalBoardIdを使って正しいボードを判定
+      // （handleDragOverでboard_idが更新されている可能性があるため）
+      targetBoardId = overTask.id === activeId ? sourceBoardId! : overTask.board_id;
+
+      // originalBoardIdを基準にタスクをフィルタリング
       const boardTasks = tasks
-        .filter((t) => t.board_id === targetBoardId && t.id !== activeId)
+        .filter((t) => {
+          // ドラッグ中のタスクを除外
+          if (t.id === activeId) return false;
+          // 元のボードにいたタスク、または移動先ボードにいるタスク
+          return t.board_id === targetBoardId;
+        })
         .sort((a, b) => a.sort_order - b.sort_order);
       const overIndex = boardTasks.findIndex((t) => t.id === overId);
       newIndex = overIndex === -1 ? boardTasks.length : overIndex;
     } else if (overBoard) {
       // ボードの空き領域にドロップ
       targetBoardId = overBoard.id;
-      const boardTasks = tasks.filter(
-        (t) => t.board_id === targetBoardId && t.id !== activeId
-      );
+      const boardTasks = tasks
+        .filter((t) => t.id !== activeId && t.board_id === targetBoardId)
+        .sort((a, b) => a.sort_order - b.sort_order);
       newIndex = boardTasks.length; // 末尾に追加
     } else {
       return;
@@ -664,10 +723,18 @@ export default function BoardPage() {
         .filter((t) => t.board_id === targetBoardId)
         .sort((a, b) => a.sort_order - b.sort_order);
       const oldIndex = boardTasks.findIndex((t) => t.id === activeId);
-      const overIndex = boardTasks.findIndex((t) => t.id === overId);
-      if (oldIndex === overIndex || overIndex === -1) return;
 
-      const reordered = arrayMove(boardTasks, oldIndex, overIndex);
+      // ボードの空き領域にドロップした場合は末尾に移動
+      let targetIndex: number;
+      if (overBoard) {
+        targetIndex = boardTasks.length - 1; // 末尾
+        if (oldIndex === targetIndex) return; // 既に末尾なら何もしない
+      } else {
+        targetIndex = boardTasks.findIndex((t) => t.id === overId);
+        if (oldIndex === targetIndex || targetIndex === -1) return;
+      }
+
+      const reordered = arrayMove(boardTasks, oldIndex, targetIndex);
       const updatedTasks = tasks.map((t) => {
         if (t.board_id !== targetBoardId) return t;
         const idx = reordered.findIndex((r) => r.id === t.id);
@@ -679,7 +746,7 @@ export default function BoardPage() {
       fetch(`/api/tasks/${activeId}/reorder`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ board_id: targetBoardId, sort_order: overIndex }),
+        body: JSON.stringify({ board_id: targetBoardId, sort_order: targetIndex }),
       }).catch((err) => setError(err.message));
     } else {
       // 別ボードへの移動
@@ -771,43 +838,32 @@ export default function BoardPage() {
                   }
                 >
                   {addingTo === board.id && (
-                    <Card sx={{ borderRadius: 1.5, mb: 1.5 }}>
-                      <CardContent sx={{ py: 1.5, "&:last-child": { pb: 1.5 } }}>
-                        <TextField
-                          autoFocus
-                          fullWidth
-                          size="small"
-                          placeholder="タスク名を入力"
-                          value={newTaskTitle}
-                          onChange={(e) => setNewTaskTitle(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") handleAddTask(board.id);
-                            if (e.key === "Escape") {
-                              setAddingTo(null);
-                              setNewTaskTitle("");
-                            }
-                          }}
-                        />
-                        <Box sx={{ display: "flex", gap: 1, mt: 1 }}>
-                          <Button
+                    <ClickAwayListener
+                      onClickAway={() => {
+                        setAddingTo(null);
+                        setNewTaskTitle("");
+                      }}
+                    >
+                      <Card sx={{ borderRadius: 1.5, mb: 1.5 }}>
+                        <CardContent sx={{ py: 1.5, "&:last-child": { pb: 1.5 } }}>
+                          <TextField
+                            autoFocus
+                            fullWidth
                             size="small"
-                            variant="contained"
-                            onClick={() => handleAddTask(board.id)}
-                          >
-                            追加
-                          </Button>
-                          <Button
-                            size="small"
-                            onClick={() => {
-                              setAddingTo(null);
-                              setNewTaskTitle("");
+                            placeholder="タスク名を入力"
+                            value={newTaskTitle}
+                            onChange={(e) => setNewTaskTitle(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") handleAddTask(board.id);
+                              if (e.key === "Escape") {
+                                setAddingTo(null);
+                                setNewTaskTitle("");
+                              }
                             }}
-                          >
-                            キャンセル
-                          </Button>
-                        </Box>
-                      </CardContent>
-                    </Card>
+                          />
+                        </CardContent>
+                      </Card>
+                    </ClickAwayListener>
                   )}
                   <SortableContext
                     items={boardTasks.map((t) => t.id)}
@@ -822,6 +878,11 @@ export default function BoardPage() {
                           onUpdateDescription={handleUpdateDescription}
                           onToggleCompleted={handleToggleCompleted}
                           onDelete={handleDelete}
+                          showIndicator={
+                            taskDropIndicator?.taskId === task.id
+                              ? taskDropIndicator.position
+                              : null
+                          }
                         />
                       ))}
                     </Stack>
