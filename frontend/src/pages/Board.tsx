@@ -107,6 +107,14 @@ function DraggableCard({
     }
   };
 
+  const handleTitleClick = () => {
+    // ドラッグ中でなければ編集モードに
+    if (!isDragging) {
+      setIsEditing(true);
+      setEditingTitle(task.title);
+    }
+  };
+
   return (
     <Card
       ref={setNodeRef}
@@ -158,6 +166,7 @@ function DraggableCard({
                 flex: 1,
                 minWidth: 0,
               }}
+              onClick={handleTitleClick}
             >
               {task.project && (
                 <Chip
@@ -177,7 +186,6 @@ function DraggableCard({
               <Typography
                 variant="body1"
                 sx={{
-                  cursor: "pointer",
                   overflow: "hidden",
                   textOverflow: "ellipsis",
                   whiteSpace: "nowrap",
@@ -186,12 +194,6 @@ function DraggableCard({
                     color: "text.disabled",
                   }),
                 }}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setIsEditing(true);
-                  setEditingTitle(task.title);
-                }}
-                onPointerDown={(e) => e.stopPropagation()}
               >
                 {task.title}
               </Typography>
@@ -249,7 +251,11 @@ export default function BoardPage() {
   const [activeTask, setActiveTask] = useState<Task | null>(null);
 
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8,
+      },
+    })
   );
 
   const handleAddTask = (boardId: string) => {
