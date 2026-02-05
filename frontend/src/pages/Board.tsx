@@ -13,14 +13,17 @@ import {
   DialogContentText,
   DialogTitle,
   Drawer,
-  FormControlLabel,
+  FormControl,
   IconButton,
+  InputLabel,
   List,
   ListItem,
   ListItemButton,
   ListItemIcon,
   ListItemText,
+  MenuItem,
   Paper,
+  Select,
   Snackbar,
   Stack,
   TextField,
@@ -197,16 +200,20 @@ function SortableColumn({
 
 function DraggableCard({
   task,
+  projects,
   onUpdateTitle,
   onUpdateDescription,
+  onUpdateProject,
   onToggleCompleted,
   onDelete,
   onArchive,
   showIndicator,
 }: {
   task: Task;
+  projects: Project[];
   onUpdateTitle: (taskId: string, title: string) => void;
   onUpdateDescription: (taskId: string, description: string) => void;
+  onUpdateProject: (taskId: string, projectId: string | null) => void;
   onToggleCompleted: (task: Task) => void;
   onDelete: (task: Task) => void;
   onArchive: (task: Task) => void;
@@ -215,6 +222,7 @@ function DraggableCard({
   const [isExpanded, setIsExpanded] = useState(false);
   const [editingTitle, setEditingTitle] = useState("");
   const [editingDescription, setEditingDescription] = useState("");
+  const [editingProjectId, setEditingProjectId] = useState("");
 
   const {
     attributes,
@@ -246,6 +254,7 @@ function DraggableCard({
       setIsExpanded(true);
       setEditingTitle(task.title);
       setEditingDescription(task.description ?? "");
+      setEditingProjectId(task.project?.id ?? "");
     }
   };
 
@@ -257,6 +266,10 @@ function DraggableCard({
     const description = editingDescription.trim();
     if (description !== (task.description ?? "")) {
       onUpdateDescription(task.id, description);
+    }
+    const currentProjectId = task.project?.id ?? "";
+    if (editingProjectId !== currentProjectId) {
+      onUpdateProject(task.id, editingProjectId || null);
     }
     setIsExpanded(false);
   };
@@ -280,141 +293,173 @@ function DraggableCard({
         {...cardListeners}
         {...attributes}
       >
-      <CardContent sx={{ py: 1.5, "&:last-child": { pb: 1.5 } }}>
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-          {isExpanded && (
-            <Box
-              {...handleListeners}
-              sx={{
-                cursor: "grab",
-                display: "flex",
-                alignItems: "center",
-                color: "text.disabled",
-                flexShrink: 0,
-              }}
-            >
-              <DragIndicatorIcon fontSize="small" />
-            </Box>
-          )}
-          <IconButton
-            size="small"
-            onClick={(e) => {
-              e.stopPropagation();
-              onToggleCompleted(task);
-            }}
-            sx={{ p: 0, flexShrink: 0 }}
-          >
-            {task.completed_at ? (
-              <CheckCircleIcon color="success" fontSize="small" />
-            ) : (
-              <RadioButtonUncheckedIcon
-                fontSize="small"
-                sx={{ color: "text.secondary" }}
-              />
-            )}
-          </IconButton>
-          {isExpanded ? (
-            <TextField
-              autoFocus
-              fullWidth
-              size="small"
-              variant="standard"
-              value={editingTitle}
-              onChange={(e) => setEditingTitle(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Escape") handleCollapse();
-              }}
-              onClick={(e) => e.stopPropagation()}
-              onPointerDown={(e) => e.stopPropagation()}
-            />
-          ) : (
-            <Box
-              sx={{
-                display: "flex",
-                alignItems: "center",
-                gap: 0.75,
-                flex: 1,
-                minWidth: 0,
-              }}
-              onClick={handleExpand}
-            >
-              {task.project && (
-                <Chip
-                  label={task.project.short_name}
-                  size="small"
-                  sx={{
-                    height: 20,
-                    fontSize: "0.7rem",
-                    flexShrink: 0,
-                    ...(task.project.color && {
-                      bgcolor: task.project.color,
-                      color: "white",
-                    }),
-                  }}
-                />
-              )}
-              <Typography
-                variant="body1"
+        <CardContent sx={{ py: 1.5, "&:last-child": { pb: 1.5 } }}>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+            {isExpanded && (
+              <Box
+                {...handleListeners}
                 sx={{
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                  ...(task.completed_at && {
-                    textDecoration: "line-through",
-                    color: "text.disabled",
-                  }),
+                  cursor: "grab",
+                  display: "flex",
+                  alignItems: "center",
+                  color: "text.disabled",
+                  flexShrink: 0,
                 }}
               >
-                {task.title}
-              </Typography>
-            </Box>
-          )}
-          <Box sx={{ display: "flex", alignItems: "center", ml: "auto", flexShrink: 0 }}>
-            {task.completed_at && (
-              <IconButton
-                size="small"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onArchive(task);
-                }}
-                sx={{ p: 0 }}
-                title="アーカイブ"
-              >
-                <ArchiveIcon fontSize="small" sx={{ color: "text.disabled" }} />
-              </IconButton>
+                <DragIndicatorIcon fontSize="small" />
+              </Box>
             )}
             <IconButton
               size="small"
               onClick={(e) => {
                 e.stopPropagation();
-                onDelete(task);
+                onToggleCompleted(task);
               }}
-              sx={{ p: 0 }}
+              sx={{ p: 0, flexShrink: 0 }}
             >
-              <DeleteIcon fontSize="small" sx={{ color: "text.disabled" }} />
+              {task.completed_at ? (
+                <CheckCircleIcon color="success" fontSize="small" />
+              ) : (
+                <RadioButtonUncheckedIcon
+                  fontSize="small"
+                  sx={{ color: "text.secondary" }}
+                />
+              )}
             </IconButton>
+            {isExpanded ? (
+              <TextField
+                autoFocus
+                fullWidth
+                size="small"
+                variant="standard"
+                value={editingTitle}
+                onChange={(e) => setEditingTitle(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") handleCollapse();
+                }}
+                onClick={(e) => e.stopPropagation()}
+                onPointerDown={(e) => e.stopPropagation()}
+              />
+            ) : (
+              <Box
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 0.75,
+                  flex: 1,
+                  minWidth: 0,
+                }}
+                onClick={handleExpand}
+              >
+                {task.project && (
+                  <Chip
+                    label={task.project.short_name}
+                    size="small"
+                    sx={{
+                      height: 20,
+                      fontSize: "0.7rem",
+                      flexShrink: 0,
+                      ...(task.project.color && {
+                        bgcolor: task.project.color,
+                        color: "white",
+                      }),
+                    }}
+                  />
+                )}
+                <Typography
+                  variant="body1"
+                  sx={{
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                    ...(task.completed_at && {
+                      textDecoration: "line-through",
+                      color: "text.disabled",
+                    }),
+                  }}
+                >
+                  {task.title}
+                </Typography>
+              </Box>
+            )}
+            <Box sx={{ display: "flex", alignItems: "center", ml: "auto", flexShrink: 0 }}>
+              {task.completed_at && (
+                <IconButton
+                  size="small"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onArchive(task);
+                  }}
+                  sx={{ p: 0 }}
+                  title="アーカイブ"
+                >
+                  <ArchiveIcon fontSize="small" sx={{ color: "text.disabled" }} />
+                </IconButton>
+              )}
+              <IconButton
+                size="small"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDelete(task);
+                }}
+                sx={{ p: 0 }}
+              >
+                <DeleteIcon fontSize="small" sx={{ color: "text.disabled" }} />
+              </IconButton>
+            </Box>
           </Box>
-        </Box>
-        {isExpanded && (
-          <Box sx={{ mt: 1.5, pl: 4.5 }}>
-            <TextField
-              fullWidth
-              multiline
-              minRows={2}
-              size="small"
-              placeholder="詳細を入力..."
-              value={editingDescription}
-              onChange={(e) => setEditingDescription(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Escape") handleCollapse();
-              }}
-              onClick={(e) => e.stopPropagation()}
-              onPointerDown={(e) => e.stopPropagation()}
-            />
-          </Box>
-        )}
-      </CardContent>
-    </Card>
+          {isExpanded && (
+            <Box sx={{ mt: 1.5, pl: 4.5 }}>
+              <Stack spacing={1.5}>
+                <TextField
+                  fullWidth
+                  multiline
+                  minRows={2}
+                  size="small"
+                  placeholder="詳細を入力..."
+                  value={editingDescription}
+                  onChange={(e) => setEditingDescription(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") handleCollapse();
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                  onPointerDown={(e) => e.stopPropagation()}
+                />
+                <FormControl size="small" fullWidth>
+                  <InputLabel>プロジェクト</InputLabel>
+                  <Select
+                    value={editingProjectId}
+                    onChange={(e) => setEditingProjectId(e.target.value)}
+                    label="プロジェクト"
+                    onClick={(e) => e.stopPropagation()}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    MenuProps={{ disablePortal: true }}
+                  >
+                    <MenuItem value="">
+                      <em>なし</em>
+                    </MenuItem>
+                    {projects.map((p) => (
+                      <MenuItem key={p.id} value={p.id}>
+                        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                          <Box
+                            sx={{
+                              width: 12,
+                              height: 12,
+                              bgcolor: p.color || "#ccc",
+                              borderRadius: 0.5,
+                            }}
+                          />
+                          {p.name}
+                        </Box>
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              </Stack>
+            </Box>
+          )}
+        </CardContent>
+      </Card>
       {showIndicator === "after" && (
         <Box sx={{ ...indicatorStyle, bottom: -6 }} />
       )}
@@ -560,9 +605,11 @@ export default function BoardPage() {
   const [boards, setBoards] = useState<Board[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [inboxTasks, setInboxTasks] = useState<InboxTask[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [addingTo, setAddingTo] = useState<string | null>(null);
   const [newTaskTitle, setNewTaskTitle] = useState("");
+  const [newTaskProjectId, setNewTaskProjectId] = useState<string>("");
   const [deletedTask, setDeletedTask] = useState<Task | null>(null);
   const [activeTask, setActiveTask] = useState<Task | null>(null);
   const [activeBoard, setActiveBoard] = useState<Board | null>(null);
@@ -610,17 +657,26 @@ export default function BoardPage() {
     localStorage.setItem("board-hidden-boards", JSON.stringify([...hiddenBoards]));
   }, [hiddenBoards]);
 
+  const resetAddTaskForm = () => {
+    setAddingTo(null);
+    setNewTaskTitle("");
+    setNewTaskProjectId("");
+  };
+
   const handleAddTask = (boardId: string) => {
     const title = newTaskTitle.trim();
     if (!title) {
-      setAddingTo(null);
-      setNewTaskTitle("");
+      resetAddTaskForm();
       return;
     }
     fetch("/api/tasks", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title, board_id: boardId }),
+      body: JSON.stringify({
+        title,
+        board_id: boardId,
+        project_id: newTaskProjectId || null,
+      }),
     })
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -628,8 +684,7 @@ export default function BoardPage() {
       })
       .then((task: Task) => {
         setTasks((prev) => [...prev, task]);
-        setNewTaskTitle("");
-        setAddingTo(null);
+        resetAddTaskForm();
       })
       .catch((err) => setError(err.message));
   };
@@ -657,6 +712,24 @@ export default function BoardPage() {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ description: description || null }),
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then((updated: Task) => {
+        setTasks((prev) =>
+          prev.map((t) => (t.id === updated.id ? updated : t))
+        );
+      })
+      .catch((err) => setError(err.message));
+  };
+
+  const handleUpdateProject = (taskId: string, projectId: string | null) => {
+    fetch(`/api/tasks/${taskId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ project_id: projectId }),
     })
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -1151,11 +1224,16 @@ export default function BoardPage() {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();
       }),
+      fetch("/api/projects").then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      }),
     ])
-      .then(([boardsData, tasksData, inboxData]) => {
+      .then(([boardsData, tasksData, inboxData, projectsData]) => {
         setBoards(boardsData);
         setTasks(tasksData);
         setInboxTasks(inboxData);
+        setProjects(projectsData);
       })
       .catch((err) => setError(err.message));
   }, []);
@@ -1355,188 +1433,211 @@ export default function BoardPage() {
                 Inbox ({inboxTasks.length})
               </Typography>
               <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1 }}>
-              {inboxTasks.map((task) => (
-                <InboxTaskCard
-                  key={task.id}
-                  task={task}
-                  onToggleCompleted={(t) => {
-                    fetch(`/api/tasks/${t.id}`, {
-                      method: "PATCH",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ completed: !t.completed_at }),
-                    })
-                      .then((res) => {
-                        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                        return res.json();
+                {inboxTasks.map((task) => (
+                  <InboxTaskCard
+                    key={task.id}
+                    task={task}
+                    onToggleCompleted={(t) => {
+                      fetch(`/api/tasks/${t.id}`, {
+                        method: "PATCH",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ completed: !t.completed_at }),
                       })
-                      .then((updated) => {
-                        setInboxTasks((prev) =>
-                          prev.map((it) => (it.id === t.id ? { ...it, completed_at: updated.completed_at } : it))
-                        );
-                      })
-                      .catch((err) => setError(err.message));
-                  }}
-                  onDelete={(t) => {
-                    setInboxTasks((prev) => prev.filter((it) => it.id !== t.id));
-                    fetch(`/api/tasks/${t.id}`, { method: "DELETE" }).catch((err) =>
-                      setError(err.message)
-                    );
-                  }}
-                />
-              ))}
-            </Box>
-          </Paper>
-        )}
-
-        <SortableContext
-          items={visibleBoards.map((b) => b.id)}
-          strategy={horizontalListSortingStrategy}
-        >
-          <Box
-            sx={{
-              display: "grid",
-              gridTemplateColumns: { xs: "1fr", md: `repeat(${visibleBoards.length}, 1fr)` },
-              gap: 2,
-            }}
-          >
-            {visibleBoards.map((board) => {
-              const boardTasks = tasks
-                .filter((t) => t.board_id === board.id)
-                .sort((a, b) => a.sort_order - b.sort_order);
-              return (
-                <SortableColumn
-                  key={board.id}
-                  board={board}
-                  taskCount={boardTasks.length}
-                  onAddClick={() => setAddingTo(board.id)}
-                  showIndicator={
-                    boardDropIndicator?.boardId === board.id
-                      ? boardDropIndicator.position
-                      : null
-                  }
-                >
-                  {addingTo === board.id && (
-                    <ClickAwayListener
-                      onClickAway={() => {
-                        setAddingTo(null);
-                        setNewTaskTitle("");
-                      }}
-                    >
-                      <Card sx={{ borderRadius: 1.5, mb: 1.5 }}>
-                        <CardContent sx={{ py: 1.5, "&:last-child": { pb: 1.5 } }}>
-                          <TextField
-                            autoFocus
-                            fullWidth
-                            size="small"
-                            placeholder="タスク名を入力"
-                            value={newTaskTitle}
-                            onChange={(e) => setNewTaskTitle(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") handleAddTask(board.id);
-                              if (e.key === "Escape") {
-                                setAddingTo(null);
-                                setNewTaskTitle("");
-                              }
-                            }}
-                          />
-                        </CardContent>
-                      </Card>
-                    </ClickAwayListener>
-                  )}
-                  <SortableContext
-                    items={boardTasks.map((t) => t.id)}
-                    strategy={verticalListSortingStrategy}
-                  >
-                    <Stack spacing={1.5}>
-                      {boardTasks.map((task) => (
-                        <DraggableCard
-                          key={task.id}
-                          task={task}
-                          onUpdateTitle={handleUpdateTitle}
-                          onUpdateDescription={handleUpdateDescription}
-                          onToggleCompleted={handleToggleCompleted}
-                          onDelete={handleDelete}
-                          onArchive={handleArchive}
-                          showIndicator={
-                            taskDropIndicator?.taskId === task.id
-                              ? taskDropIndicator.position
-                              : null
-                          }
-                        />
-                      ))}
-                    </Stack>
-                  </SortableContext>
-                </SortableColumn>
-              );
-            })}
-          </Box>
-        </SortableContext>
-        <DragOverlay>
-          {activeTask && (
-            <Card sx={{ borderRadius: 1.5, boxShadow: 4, opacity: 0.9 }}>
-              <CardContent sx={{ py: 1.5, "&:last-child": { pb: 1.5 } }}>
-                <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                  <IconButton size="small" sx={{ p: 0, flexShrink: 0 }}>
-                    {activeTask.completed_at ? (
-                      <CheckCircleIcon color="success" fontSize="small" />
-                    ) : (
-                      <RadioButtonUncheckedIcon
-                        fontSize="small"
-                        sx={{ color: "text.secondary" }}
-                      />
-                    )}
-                  </IconButton>
-                  <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, flex: 1, minWidth: 0 }}>
-                    {activeTask.project && (
-                      <Chip
-                        label={activeTask.project.short_name}
-                        size="small"
-                        sx={{
-                          height: 20,
-                          fontSize: "0.7rem",
-                          flexShrink: 0,
-                          ...(activeTask.project.color && {
-                            bgcolor: activeTask.project.color,
-                            color: "white",
-                          }),
-                        }}
-                      />
-                    )}
-                    <Typography variant="body1" noWrap>
-                      {activeTask.title}
-                    </Typography>
-                  </Box>
-                </Box>
-              </CardContent>
-            </Card>
-          )}
-          {activeBoard && (
-            <Paper
-              elevation={4}
-              sx={{
-                bgcolor: activeBoard.color,
-                p: 2,
-                borderRadius: 2,
-                opacity: 0.9,
-                minWidth: 200,
-              }}
-            >
-              <Box
-                sx={{
-                  display: "flex",
-                  justifyContent: "center",
-                  color: "text.disabled",
-                  mb: 0.5,
-                }}
-              >
-                <DragHandleIcon fontSize="small" />
+                        .then((res) => {
+                          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                          return res.json();
+                        })
+                        .then((updated) => {
+                          setInboxTasks((prev) =>
+                            prev.map((it) => (it.id === t.id ? { ...it, completed_at: updated.completed_at } : it))
+                          );
+                        })
+                        .catch((err) => setError(err.message));
+                    }}
+                    onDelete={(t) => {
+                      setInboxTasks((prev) => prev.filter((it) => it.id !== t.id));
+                      fetch(`/api/tasks/${t.id}`, { method: "DELETE" }).catch((err) =>
+                        setError(err.message)
+                      );
+                    }}
+                  />
+                ))}
               </Box>
-              <Typography variant="subtitle1" fontWeight="bold">
-                {activeBoard.label}
-              </Typography>
             </Paper>
           )}
-        </DragOverlay>
+
+          <SortableContext
+            items={visibleBoards.map((b) => b.id)}
+            strategy={horizontalListSortingStrategy}
+          >
+            <Box
+              sx={{
+                display: "grid",
+                gridTemplateColumns: { xs: "1fr", md: `repeat(${visibleBoards.length}, 1fr)` },
+                gap: 2,
+              }}
+            >
+              {visibleBoards.map((board) => {
+                const boardTasks = tasks
+                  .filter((t) => t.board_id === board.id)
+                  .sort((a, b) => a.sort_order - b.sort_order);
+                return (
+                  <SortableColumn
+                    key={board.id}
+                    board={board}
+                    taskCount={boardTasks.length}
+                    onAddClick={() => setAddingTo(board.id)}
+                    showIndicator={
+                      boardDropIndicator?.boardId === board.id
+                        ? boardDropIndicator.position
+                        : null
+                    }
+                  >
+                    {addingTo === board.id && (
+                      <ClickAwayListener onClickAway={resetAddTaskForm}>
+                        <Card sx={{ borderRadius: 1.5, mb: 1.5 }}>
+                          <CardContent sx={{ py: 1.5, "&:last-child": { pb: 1.5 } }}>
+                            <Stack spacing={1.5}>
+                              <TextField
+                                autoFocus
+                                fullWidth
+                                size="small"
+                                placeholder="タスク名を入力"
+                                value={newTaskTitle}
+                                onChange={(e) => setNewTaskTitle(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") handleAddTask(board.id);
+                                  if (e.key === "Escape") resetAddTaskForm();
+                                }}
+                              />
+                              <FormControl size="small" fullWidth>
+                                <InputLabel>プロジェクト</InputLabel>
+                                <Select
+                                  value={newTaskProjectId}
+                                  onChange={(e) => setNewTaskProjectId(e.target.value)}
+                                  label="プロジェクト"
+                                >
+                                  <MenuItem value="">
+                                    <em>なし</em>
+                                  </MenuItem>
+                                  {projects.map((p) => (
+                                    <MenuItem key={p.id} value={p.id}>
+                                      <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                                        <Box
+                                          sx={{
+                                            width: 12,
+                                            height: 12,
+                                            bgcolor: p.color || "#ccc",
+                                            borderRadius: 0.5,
+                                          }}
+                                        />
+                                        {p.name}
+                                      </Box>
+                                    </MenuItem>
+                                  ))}
+                                </Select>
+                              </FormControl>
+                            </Stack>
+                          </CardContent>
+                        </Card>
+                      </ClickAwayListener>
+                    )}
+                    <SortableContext
+                      items={boardTasks.map((t) => t.id)}
+                      strategy={verticalListSortingStrategy}
+                    >
+                      <Stack spacing={1.5}>
+                        {boardTasks.map((task) => (
+                          <DraggableCard
+                            key={task.id}
+                            task={task}
+                            projects={projects}
+                            onUpdateTitle={handleUpdateTitle}
+                            onUpdateDescription={handleUpdateDescription}
+                            onUpdateProject={handleUpdateProject}
+                            onToggleCompleted={handleToggleCompleted}
+                            onDelete={handleDelete}
+                            onArchive={handleArchive}
+                            showIndicator={
+                              taskDropIndicator?.taskId === task.id
+                                ? taskDropIndicator.position
+                                : null
+                            }
+                          />
+                        ))}
+                      </Stack>
+                    </SortableContext>
+                  </SortableColumn>
+                );
+              })}
+            </Box>
+          </SortableContext>
+          <DragOverlay>
+            {activeTask && (
+              <Card sx={{ borderRadius: 1.5, boxShadow: 4, opacity: 0.9 }}>
+                <CardContent sx={{ py: 1.5, "&:last-child": { pb: 1.5 } }}>
+                  <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                    <IconButton size="small" sx={{ p: 0, flexShrink: 0 }}>
+                      {activeTask.completed_at ? (
+                        <CheckCircleIcon color="success" fontSize="small" />
+                      ) : (
+                        <RadioButtonUncheckedIcon
+                          fontSize="small"
+                          sx={{ color: "text.secondary" }}
+                        />
+                      )}
+                    </IconButton>
+                    <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, flex: 1, minWidth: 0 }}>
+                      {activeTask.project && (
+                        <Chip
+                          label={activeTask.project.short_name}
+                          size="small"
+                          sx={{
+                            height: 20,
+                            fontSize: "0.7rem",
+                            flexShrink: 0,
+                            ...(activeTask.project.color && {
+                              bgcolor: activeTask.project.color,
+                              color: "white",
+                            }),
+                          }}
+                        />
+                      )}
+                      <Typography variant="body1" noWrap>
+                        {activeTask.title}
+                      </Typography>
+                    </Box>
+                  </Box>
+                </CardContent>
+              </Card>
+            )}
+            {activeBoard && (
+              <Paper
+                elevation={4}
+                sx={{
+                  bgcolor: activeBoard.color,
+                  p: 2,
+                  borderRadius: 2,
+                  opacity: 0.9,
+                  minWidth: 200,
+                }}
+              >
+                <Box
+                  sx={{
+                    display: "flex",
+                    justifyContent: "center",
+                    color: "text.disabled",
+                    mb: 0.5,
+                  }}
+                >
+                  <DragHandleIcon fontSize="small" />
+                </Box>
+                <Typography variant="subtitle1" fontWeight="bold">
+                  {activeBoard.label}
+                </Typography>
+              </Paper>
+            )}
+          </DragOverlay>
         </DndContext>
         <Snackbar
           open={deletedTask !== null}

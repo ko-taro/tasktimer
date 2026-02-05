@@ -9,7 +9,11 @@ import {
   Chip,
   ClickAwayListener,
   Collapse,
+  FormControl,
   IconButton,
+  InputLabel,
+  MenuItem,
+  Select,
   Stack,
   TextField,
   Typography,
@@ -48,6 +52,7 @@ export default function ProjectDetail() {
   const { projectId } = useParams<{ projectId: string }>();
   const [project, setProject] = useState<Project | null>(null);
   const [tasks, setTasks] = useState<ProjectTask[]>([]);
+  const [allProjects, setAllProjects] = useState<Project[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isAdding, setIsAdding] = useState(false);
   const [newTaskTitle, setNewTaskTitle] = useState("");
@@ -59,7 +64,7 @@ export default function ProjectDetail() {
   useEffect(() => {
     if (!projectId) return;
 
-    // プロジェクト情報とタスク一覧を並行取得
+    // プロジェクト情報、タスク一覧、全プロジェクト一覧を並行取得
     Promise.all([
       fetch(`/api/projects/${projectId}`).then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -69,10 +74,15 @@ export default function ProjectDetail() {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();
       }),
+      fetch("/api/projects").then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      }),
     ])
-      .then(([projectData, tasksData]) => {
+      .then(([projectData, tasksData, allProjectsData]) => {
         setProject(projectData);
         setTasks(tasksData);
+        setAllProjects(allProjectsData);
       })
       .catch((err) => setError(err.message));
   }, [projectId]);
@@ -125,7 +135,7 @@ export default function ProjectDetail() {
       .catch((err) => setError(err.message));
   };
 
-  const handleUpdateTask = (taskId: string, updates: Partial<ProjectTask>) => {
+  const handleUpdateTask = (taskId: string, updates: Partial<ProjectTask> & { project_id?: string | null }) => {
     fetch(`/api/tasks/${taskId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -136,19 +146,24 @@ export default function ProjectDetail() {
         return res.json();
       })
       .then((updated) => {
-        setTasks((prev) =>
-          prev.map((t) =>
-            t.id === taskId
-              ? {
-                  ...t,
-                  title: updated.title,
-                  description: updated.description,
-                  scheduled_start: updated.scheduled_start,
-                  scheduled_end: updated.scheduled_end,
-                }
-              : t
-          )
-        );
+        // プロジェクトが変更された場合、リストから削除（別プロジェクトに移動したため）
+        if (updates.project_id !== undefined && updates.project_id !== projectId) {
+          setTasks((prev) => prev.filter((t) => t.id !== taskId));
+        } else {
+          setTasks((prev) =>
+            prev.map((t) =>
+              t.id === taskId
+                ? {
+                    ...t,
+                    title: updated.title,
+                    description: updated.description,
+                    scheduled_start: updated.scheduled_start,
+                    scheduled_end: updated.scheduled_end,
+                  }
+                : t
+            )
+          );
+        }
       })
       .catch((err) => setError(err.message));
   };
@@ -353,6 +368,8 @@ export default function ProjectDetail() {
               <TaskItem
                 key={task.id}
                 task={task}
+                projects={allProjects}
+                currentProjectId={projectId!}
                 onToggleComplete={handleToggleComplete}
                 onDelete={handleDeleteTask}
                 onArchive={handleArchive}
@@ -374,6 +391,8 @@ export default function ProjectDetail() {
               <TaskItem
                 key={task.id}
                 task={task}
+                projects={allProjects}
+                currentProjectId={projectId!}
                 onToggleComplete={handleToggleComplete}
                 onDelete={handleDeleteTask}
                 onArchive={handleArchive}
@@ -395,6 +414,8 @@ export default function ProjectDetail() {
               <TaskItem
                 key={task.id}
                 task={task}
+                projects={allProjects}
+                currentProjectId={projectId!}
                 onToggleComplete={handleToggleComplete}
                 onDelete={handleDeleteTask}
                 onArchive={handleArchive}
@@ -426,6 +447,8 @@ function formatDate(dateStr: string | null): string {
 
 function TaskItem({
   task,
+  projects,
+  currentProjectId,
   onToggleComplete,
   onDelete,
   onArchive,
@@ -433,10 +456,12 @@ function TaskItem({
   isArchived = false,
 }: {
   task: ProjectTask;
+  projects: Project[];
+  currentProjectId: string;
   onToggleComplete: (id: string, completed: boolean) => void;
   onDelete: (id: string) => void;
   onArchive: (id: string, archive: boolean) => void;
-  onUpdate: (id: string, updates: Partial<ProjectTask>) => void;
+  onUpdate: (id: string, updates: Partial<ProjectTask> & { project_id?: string | null }) => void;
   isArchived?: boolean;
 }) {
   const [isEditing, setIsEditing] = useState(false);
@@ -444,6 +469,7 @@ function TaskItem({
   const [editDescription, setEditDescription] = useState(task.description || "");
   const [editStartDate, setEditStartDate] = useState(task.scheduled_start || "");
   const [editEndDate, setEditEndDate] = useState(task.scheduled_end || "");
+  const [editProjectId, setEditProjectId] = useState(currentProjectId);
 
   const handleSave = () => {
     if (!editTitle.trim()) return;
@@ -452,6 +478,7 @@ function TaskItem({
       description: editDescription.trim() || null,
       scheduled_start: editStartDate || null,
       scheduled_end: editEndDate || null,
+      project_id: editProjectId || null,
     });
     setIsEditing(false);
   };
@@ -461,6 +488,7 @@ function TaskItem({
     setEditDescription(task.description || "");
     setEditStartDate(task.scheduled_start || "");
     setEditEndDate(task.scheduled_end || "");
+    setEditProjectId(currentProjectId);
     setIsEditing(false);
   };
 
@@ -512,6 +540,34 @@ function TaskItem({
                   sx={{ flex: 1 }}
                 />
               </Box>
+              <FormControl size="small" fullWidth>
+                <InputLabel>プロジェクト</InputLabel>
+                <Select
+                  value={editProjectId}
+                  onChange={(e) => setEditProjectId(e.target.value)}
+                  label="プロジェクト"
+                  MenuProps={{ disablePortal: true }}
+                >
+                  <MenuItem value="">
+                    <em>なし</em>
+                  </MenuItem>
+                  {projects.map((p) => (
+                    <MenuItem key={p.id} value={p.id}>
+                      <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                        <Box
+                          sx={{
+                            width: 12,
+                            height: 12,
+                            bgcolor: p.color || "#ccc",
+                            borderRadius: 0.5,
+                          }}
+                        />
+                        {p.name}
+                      </Box>
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
               <Box sx={{ display: "flex", gap: 1, justifyContent: "flex-end" }}>
                 <Button size="small" onClick={handleCancel}>
                   キャンセル
