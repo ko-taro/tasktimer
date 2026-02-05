@@ -28,12 +28,20 @@ import {
 import { useDraggable, useDroppable } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
 
+type Project = {
+  id: string;
+  name: string;
+  short_name: string;
+  color: string | null;
+};
+
 type Task = {
   id: string;
   title: string;
   board_id: string;
   sort_order: number;
   completed: boolean;
+  project: Project | null;
 };
 
 type Board = {
@@ -142,25 +150,52 @@ function DraggableCard({
               onPointerDown={(e) => e.stopPropagation()}
             />
           ) : (
-            <Typography
-              variant="body1"
+            <Box
               sx={{
-                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                gap: 0.75,
                 flex: 1,
-                ...(task.completed && {
-                  textDecoration: "line-through",
-                  color: "text.disabled",
-                }),
+                minWidth: 0,
               }}
-              onClick={(e) => {
-                e.stopPropagation();
-                setIsEditing(true);
-                setEditingTitle(task.title);
-              }}
-              onPointerDown={(e) => e.stopPropagation()}
             >
-              {task.title}
-            </Typography>
+              {task.project && (
+                <Chip
+                  label={task.project.short_name}
+                  size="small"
+                  sx={{
+                    height: 20,
+                    fontSize: "0.7rem",
+                    flexShrink: 0,
+                    ...(task.project.color && {
+                      bgcolor: task.project.color,
+                      color: "white",
+                    }),
+                  }}
+                />
+              )}
+              <Typography
+                variant="body1"
+                sx={{
+                  cursor: "pointer",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                  ...(task.completed && {
+                    textDecoration: "line-through",
+                    color: "text.disabled",
+                  }),
+                }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setIsEditing(true);
+                  setEditingTitle(task.title);
+                }}
+                onPointerDown={(e) => e.stopPropagation()}
+              >
+                {task.title}
+              </Typography>
+            </Box>
           )}
           <IconButton
             size="small"
@@ -182,7 +217,23 @@ function TaskCardOverlay({ task }: { task: Task }) {
   return (
     <Card sx={{ borderRadius: 1.5, boxShadow: 6, width: 300 }}>
       <CardContent sx={{ py: 1.5, "&:last-child": { pb: 1.5 } }}>
-        <Typography variant="body1">{task.title}</Typography>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
+          {task.project && (
+            <Chip
+              label={task.project.short_name}
+              size="small"
+              sx={{
+                height: 20,
+                fontSize: "0.7rem",
+                ...(task.project.color && {
+                  bgcolor: task.project.color,
+                  color: "white",
+                }),
+              }}
+            />
+          )}
+          <Typography variant="body1">{task.title}</Typography>
+        </Box>
       </CardContent>
     </Card>
   );
@@ -261,6 +312,7 @@ export default function BoardPage() {
       body: JSON.stringify({
         title: task.title,
         board_id: task.board_id,
+        project_id: task.project?.id,
       }),
     })
       .then((res) => {

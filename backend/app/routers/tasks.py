@@ -8,17 +8,26 @@ from app.database import get_conn
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 
 
+class ProjectInfo(BaseModel):
+    id: str
+    name: str
+    short_name: str
+    color: str | None
+
+
 class TaskResponse(BaseModel):
     id: str
     title: str
     board_id: str
     sort_order: int
     completed: bool
+    project: ProjectInfo | None
 
 
 class TaskCreate(BaseModel):
     title: str
     board_id: str
+    project_id: str | None = None
 
 
 class TaskUpdate(BaseModel):
@@ -26,15 +35,25 @@ class TaskUpdate(BaseModel):
     board_id: str | None = None
     sort_order: int | None = None
     completed: bool | None = None
+    project_id: str | None = None
 
 
 def _row_to_task(row: Any) -> TaskResponse:
+    project = None
+    if row.get("project_id"):
+        project = ProjectInfo(
+            id=str(row["project_id"]),
+            name=row["project_name"],
+            short_name=row["project_short_name"],
+            color=row["project_color"],
+        )
     return TaskResponse(
         id=str(row["id"]),
         title=row["title"],
         board_id=str(row["board_id"]),
         sort_order=row["sort_order"],
         completed=row["completed"],
+        project=project,
     )
 
 
@@ -43,10 +62,13 @@ def list_tasks() -> list[TaskResponse]:
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute("""
             SELECT t.id, t.title, t.completed,
-                   bt.board_id, bt.sort_order
+                   bt.board_id, bt.sort_order,
+                   p.id AS project_id, p.name AS project_name,
+                   p.short_name AS project_short_name, p.color AS project_color
             FROM tasks t
             JOIN board_tasks bt ON t.id = bt.task_id
             JOIN boards b ON bt.board_id = b.id
+            LEFT JOIN projects p ON t.project_id = p.id
             ORDER BY b.sort_order, bt.sort_order
         """)
         return [_row_to_task(row) for row in cur.fetchall()]
@@ -60,10 +82,18 @@ def create_task(body: TaskCreate) -> TaskResponse:
         if not cur.fetchone():
             raise HTTPException(status_code=400, detail=f"Board '{body.board_id}' not found")
 
+        # project_id の存在確認
+        project_row = None
+        if body.project_id:
+            cur.execute("SELECT id, name, short_name, color FROM projects WHERE id = %s", (body.project_id,))
+            project_row = cur.fetchone()
+            if not project_row:
+                raise HTTPException(status_code=400, detail=f"Project '{body.project_id}' not found")
+
         # タスクを作成
         cur.execute(
-            "INSERT INTO tasks (title) VALUES (%s) RETURNING *",
-            (body.title,),
+            "INSERT INTO tasks (title, project_id) VALUES (%s, %s) RETURNING *",
+            (body.title, body.project_id),
         )
         task_row = cur.fetchone()
 
@@ -81,12 +111,22 @@ def create_task(body: TaskCreate) -> TaskResponse:
         )
         conn.commit()
 
+        project = None
+        if project_row:
+            project = ProjectInfo(
+                id=str(project_row["id"]),
+                name=project_row["name"],
+                short_name=project_row["short_name"],
+                color=project_row["color"],
+            )
+
         return TaskResponse(
             id=str(task_row["id"]),
             title=task_row["title"],
             board_id=body.board_id,
             sort_order=next_order,
             completed=task_row["completed"],
+            project=project,
         )
 
 
@@ -98,7 +138,7 @@ def update_task(task_id: str, body: TaskUpdate) -> TaskResponse:
 
     with get_conn() as conn, conn.cursor() as cur:
         # tasks テーブルの更新
-        task_fields = {k: v for k, v in update_data.items() if k in ("title", "completed")}
+        task_fields = {k: v for k, v in update_data.items() if k in ("title", "completed", "project_id")}
         if task_fields:
             set_clause = ", ".join(f"{k} = %s" for k in task_fields)
             values = list(task_fields.values())
@@ -147,9 +187,12 @@ def update_task(task_id: str, body: TaskUpdate) -> TaskResponse:
         # 更新後のデータを取得して返す
         cur.execute("""
             SELECT t.id, t.title, t.completed,
-                   bt.board_id, bt.sort_order
+                   bt.board_id, bt.sort_order,
+                   p.id AS project_id, p.name AS project_name,
+                   p.short_name AS project_short_name, p.color AS project_color
             FROM tasks t
             JOIN board_tasks bt ON t.id = bt.task_id
+            LEFT JOIN projects p ON t.project_id = p.id
             WHERE t.id = %s
         """, (task_id,))
         row = cur.fetchone()
