@@ -6,6 +6,11 @@ import {
   Card,
   CardContent,
   ClickAwayListener,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogContentText,
+  DialogTitle,
   IconButton,
   Stack,
   TextField,
@@ -70,7 +75,7 @@ function ProjectCard({
 }: {
   project: Project;
   onUpdate: (id: string, data: Partial<Project>) => void;
-  onDelete: (id: string) => void;
+  onDelete: () => void;
   onClick: () => void;
 }) {
   const [isEditing, setIsEditing] = useState(false);
@@ -189,7 +194,7 @@ function ProjectCard({
               size="small"
               onClick={(e) => {
                 e.stopPropagation();
-                onDelete(project.id);
+                onDelete();
               }}
             >
               <DeleteIcon fontSize="small" />
@@ -312,6 +317,7 @@ export default function Projects() {
   const navigate = useNavigate();
   const [projects, setProjects] = useState<Project[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [deletingProject, setDeletingProject] = useState<Project | null>(null);
 
   useEffect(() => {
     fetch("/api/projects")
@@ -355,8 +361,15 @@ export default function Projects() {
       .catch((err) => setError(err.message));
   };
 
-  const handleDelete = (id: string) => {
+  const handleDeleteClick = (project: Project) => {
+    setDeletingProject(project);
+  };
+
+  const confirmDelete = () => {
+    if (!deletingProject) return;
+    const id = deletingProject.id;
     setProjects((prev) => prev.filter((p) => p.id !== id));
+    setDeletingProject(null);
     fetch(`/api/projects/${id}`, { method: "DELETE" }).catch((err) =>
       setError(err.message)
     );
@@ -381,12 +394,28 @@ export default function Projects() {
             key={project.id}
             project={project}
             onUpdate={handleUpdate}
-            onDelete={handleDelete}
+            onDelete={() => handleDeleteClick(project)}
             onClick={() => navigate(`/projects/${project.id}`)}
           />
         ))}
         <AddProjectCard onAdd={handleAdd} />
       </Box>
+
+      <Dialog open={deletingProject !== null} onClose={() => setDeletingProject(null)}>
+        <DialogTitle>プロジェクトを削除</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            「{deletingProject?.name}」を削除しますか？
+            このプロジェクトに関連するタスクも削除されます。
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDeletingProject(null)}>キャンセル</Button>
+          <Button onClick={confirmDelete} color="error" variant="contained">
+            削除
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }
