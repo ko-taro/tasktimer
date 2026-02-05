@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import categories, tasks
+from app.routers import boards, tasks
 
 app = FastAPI(title="TaskTimer API")
 
@@ -12,7 +12,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(categories.router)
+app.include_router(boards.router)
 app.include_router(tasks.router)
 
 

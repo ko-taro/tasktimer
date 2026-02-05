@@ -12,7 +12,6 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import AccessTimeIcon from "@mui/icons-material/AccessTime";
 import AddIcon from "@mui/icons-material/Add";
 import RadioButtonUncheckedIcon from "@mui/icons-material/RadioButtonUnchecked";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
@@ -32,45 +31,31 @@ import { CSS } from "@dnd-kit/utilities";
 type Task = {
   id: string;
   title: string;
-  category: string;
+  board_id: string;
+  sort_order: number;
   completed: boolean;
-  pomodoro_count: number;
-  total_seconds: number;
 };
 
-type Column = {
-  key: string;
+type Board = {
+  id: string;
   label: string;
   color: string;
 };
 
-const COLUMNS: Column[] = [
-  { key: "high", label: "High", color: "#fce4ec" },
-  { key: "medium", label: "Medium", color: "#fff3e0" },
-  { key: "low", label: "Low", color: "#e3f2fd" },
-];
-
-function formatTime(seconds: number): string {
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  if (h > 0) return `${h}h ${m}m`;
-  return `${m}m`;
-}
-
 function DroppableColumn({
-  col,
+  board,
   children,
 }: {
-  col: Column;
+  board: Board;
   children: React.ReactNode;
 }) {
-  const { setNodeRef, isOver } = useDroppable({ id: col.key });
+  const { setNodeRef, isOver } = useDroppable({ id: board.id });
   return (
     <Paper
       ref={setNodeRef}
       elevation={0}
       sx={{
-        bgcolor: col.color,
+        bgcolor: board.color,
         p: 2,
         borderRadius: 2,
         minHeight: 300,
@@ -188,33 +173,6 @@ function DraggableCard({
             <DeleteIcon fontSize="small" sx={{ color: "text.disabled" }} />
           </IconButton>
         </Box>
-        {(task.pomodoro_count > 0 || task.total_seconds > 0) && (
-          <Box
-            sx={{
-              display: "flex",
-              gap: 1,
-              mt: 1,
-              ml: 4,
-              alignItems: "center",
-            }}
-          >
-            {task.pomodoro_count > 0 && (
-              <Chip
-                label={`🍅 ${task.pomodoro_count}`}
-                size="small"
-                variant="outlined"
-              />
-            )}
-            {task.total_seconds > 0 && (
-              <Chip
-                icon={<AccessTimeIcon />}
-                label={formatTime(task.total_seconds)}
-                size="small"
-                variant="outlined"
-              />
-            )}
-          </Box>
-        )}
       </CardContent>
     </Card>
   );
@@ -230,7 +188,8 @@ function TaskCardOverlay({ task }: { task: Task }) {
   );
 }
 
-export default function Board() {
+export default function BoardPage() {
+  const [boards, setBoards] = useState<Board[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [addingTo, setAddingTo] = useState<string | null>(null);
@@ -242,7 +201,7 @@ export default function Board() {
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
   );
 
-  const handleAddTask = (category: string) => {
+  const handleAddTask = (boardId: string) => {
     const title = newTaskTitle.trim();
     if (!title) {
       setAddingTo(null);
@@ -252,7 +211,7 @@ export default function Board() {
     fetch("/api/tasks", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title, category }),
+      body: JSON.stringify({ title, board_id: boardId }),
     })
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -301,7 +260,7 @@ export default function Board() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         title: task.title,
-        category: task.category,
+        board_id: task.board_id,
       }),
     })
       .then((res) => {
@@ -343,30 +302,38 @@ export default function Board() {
     if (!over) return;
 
     const taskId = active.id as string;
-    const newCategory = over.id as string;
+    const newBoardId = over.id as string;
     const task = tasks.find((t) => t.id === taskId);
-    if (!task || task.category === newCategory) return;
+    if (!task || task.board_id === newBoardId) return;
 
     setTasks((prev) =>
       prev.map((t) =>
-        t.id === taskId ? { ...t, category: newCategory } : t
+        t.id === taskId ? { ...t, board_id: newBoardId } : t
       )
     );
 
     fetch(`/api/tasks/${taskId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ category: newCategory }),
+      body: JSON.stringify({ board_id: newBoardId }),
     }).catch((err) => setError(err.message));
   };
 
   useEffect(() => {
-    fetch("/api/tasks")
-      .then((res) => {
+    Promise.all([
+      fetch("/api/boards").then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();
+      }),
+      fetch("/api/tasks").then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      }),
+    ])
+      .then(([boardsData, tasksData]) => {
+        setBoards(boardsData);
+        setTasks(tasksData);
       })
-      .then(setTasks)
       .catch((err) => setError(err.message));
   }, []);
 
@@ -388,32 +355,32 @@ export default function Board() {
         <Box
           sx={{
             display: "grid",
-            gridTemplateColumns: { xs: "1fr", md: "repeat(3, 1fr)" },
+            gridTemplateColumns: { xs: "1fr", md: `repeat(${boards.length}, 1fr)` },
             gap: 2,
           }}
         >
-          {COLUMNS.map((col) => {
-            const columnTasks = tasks.filter((t) => t.category === col.key);
+          {boards.map((board) => {
+            const boardTasks = tasks.filter((t) => t.board_id === board.id);
             return (
-              <DroppableColumn key={col.key} col={col}>
+              <DroppableColumn key={board.id} board={board}>
                 <Box sx={{ display: "flex", alignItems: "center", mb: 2 }}>
                   <Typography variant="subtitle1" fontWeight="bold">
-                    {col.label}
+                    {board.label}
                   </Typography>
                   <Chip
-                    label={columnTasks.length}
+                    label={boardTasks.length}
                     size="small"
                     sx={{ ml: 1 }}
                   />
                   <IconButton
                     size="small"
                     sx={{ ml: "auto" }}
-                    onClick={() => setAddingTo(col.key)}
+                    onClick={() => setAddingTo(board.id)}
                   >
                     <AddIcon fontSize="small" />
                   </IconButton>
                 </Box>
-                {addingTo === col.key && (
+                {addingTo === board.id && (
                   <Card sx={{ borderRadius: 1.5, mb: 1.5 }}>
                     <CardContent sx={{ py: 1.5, "&:last-child": { pb: 1.5 } }}>
                       <TextField
@@ -424,7 +391,7 @@ export default function Board() {
                         value={newTaskTitle}
                         onChange={(e) => setNewTaskTitle(e.target.value)}
                         onKeyDown={(e) => {
-                          if (e.key === "Enter") handleAddTask(col.key);
+                          if (e.key === "Enter") handleAddTask(board.id);
                           if (e.key === "Escape") {
                             setAddingTo(null);
                             setNewTaskTitle("");
@@ -435,7 +402,7 @@ export default function Board() {
                         <Button
                           size="small"
                           variant="contained"
-                          onClick={() => handleAddTask(col.key)}
+                          onClick={() => handleAddTask(board.id)}
                         >
                           追加
                         </Button>
@@ -453,7 +420,7 @@ export default function Board() {
                   </Card>
                 )}
                 <Stack spacing={1.5}>
-                  {columnTasks.map((task) => (
+                  {boardTasks.map((task) => (
                     <DraggableCard
                       key={task.id}
                       task={task}
