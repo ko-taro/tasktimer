@@ -57,6 +57,14 @@ type Task = {
   project: Project | null;
 };
 
+type InboxTask = {
+  id: string;
+  title: string;
+  description: string | null;
+  completed: boolean;
+  project: Project | null;
+};
+
 type Board = {
   id: string;
   label: string;
@@ -384,9 +392,87 @@ function DraggableCard({
   return cardElement;
 }
 
+function InboxTaskCard({
+  task,
+  onToggleCompleted,
+  onDelete,
+}: {
+  task: InboxTask;
+  onToggleCompleted: (task: InboxTask) => void;
+  onDelete: (task: InboxTask) => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useSortable({
+    id: task.id,
+  });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  return (
+    <Card
+      ref={setNodeRef}
+      style={style}
+      sx={{ minWidth: 200, maxWidth: 300, borderRadius: 1.5 }}
+    >
+      <CardContent sx={{ py: 1, "&:last-child": { pb: 1 } }}>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+          <Box
+            {...attributes}
+            {...listeners}
+            sx={{ cursor: "grab", display: "flex", color: "text.disabled" }}
+          >
+            <DragIndicatorIcon fontSize="small" />
+          </Box>
+          <IconButton
+            size="small"
+            sx={{ p: 0, flexShrink: 0 }}
+            onClick={() => onToggleCompleted(task)}
+          >
+            {task.completed ? (
+              <CheckCircleIcon color="success" fontSize="small" />
+            ) : (
+              <RadioButtonUncheckedIcon fontSize="small" sx={{ color: "text.secondary" }} />
+            )}
+          </IconButton>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, flex: 1, minWidth: 0 }}>
+            {task.project && (
+              <Chip
+                label={task.project.short_name}
+                size="small"
+                sx={{
+                  height: 18,
+                  fontSize: "0.65rem",
+                  flexShrink: 0,
+                  ...(task.project.color && { bgcolor: task.project.color, color: "white" }),
+                }}
+              />
+            )}
+            <Typography
+              variant="body2"
+              noWrap
+              sx={{
+                textDecoration: task.completed ? "line-through" : "none",
+                color: task.completed ? "text.secondary" : "text.primary",
+              }}
+            >
+              {task.title}
+            </Typography>
+          </Box>
+          <IconButton size="small" onClick={() => onDelete(task)} sx={{ p: 0.25 }}>
+            <DeleteIcon fontSize="small" />
+          </IconButton>
+        </Box>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function BoardPage() {
   const [boards, setBoards] = useState<Board[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [inboxTasks, setInboxTasks] = useState<InboxTask[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [addingTo, setAddingTo] = useState<string | null>(null);
   const [newTaskTitle, setNewTaskTitle] = useState("");
@@ -531,11 +617,27 @@ export default function BoardPage() {
       return;
     }
 
-    // タスクをドラッグ
+    // ボード上のタスクをドラッグ
     const task = tasks.find((t) => t.id === activeId);
-    setActiveTask(task ?? null);
-    setActiveBoard(null);
-    setOriginalBoardId(task?.board_id ?? null);
+    if (task) {
+      setActiveTask(task);
+      setActiveBoard(null);
+      setOriginalBoardId(task.board_id);
+      return;
+    }
+
+    // Inboxタスクをドラッグ
+    const inboxTask = inboxTasks.find((t) => t.id === activeId);
+    if (inboxTask) {
+      // InboxTaskをTaskとして扱う（board_idは空文字で仮設定）
+      setActiveTask({
+        ...inboxTask,
+        board_id: "",
+        sort_order: 0,
+      });
+      setActiveBoard(null);
+      setOriginalBoardId(null);
+    }
   };
 
   const handleDragOver = (event: DragOverEvent) => {
@@ -574,7 +676,8 @@ export default function BoardPage() {
     setBoardDropIndicator(null);
 
     const activeTaskItem = tasks.find((t) => t.id === activeId);
-    if (!activeTaskItem) {
+    const activeInboxItem = inboxTasks.find((t) => t.id === activeId);
+    if (!activeTaskItem && !activeInboxItem) {
       setTaskDropIndicator(null);
       return;
     }
@@ -611,6 +714,11 @@ export default function BoardPage() {
       }
     } else {
       setTaskDropIndicator(null);
+      return;
+    }
+
+    // Inboxタスクの場合はboard_idの一時更新は不要
+    if (activeInboxItem || !activeTaskItem) {
       return;
     }
 
@@ -663,7 +771,7 @@ export default function BoardPage() {
     const sourceBoardId = originalBoardId;
     setOriginalBoardId(null);
 
-    if (!over || !sourceBoardId) {
+    if (!over) {
       // ドラッグがキャンセルされた場合、board_idを元に戻す
       if (sourceBoardId) {
         setTasks((prev) =>
@@ -690,19 +798,9 @@ export default function BoardPage() {
     let newIndex: number;
 
     if (overTask) {
-      // タスクの上にドロップ
-      // overTaskのboard_idではなく、originalBoardIdを使って正しいボードを判定
-      // （handleDragOverでboard_idが更新されている可能性があるため）
-      targetBoardId = overTask.id === activeId ? sourceBoardId! : overTask.board_id;
-
-      // originalBoardIdを基準にタスクをフィルタリング
+      targetBoardId = overTask.board_id;
       const boardTasks = tasks
-        .filter((t) => {
-          // ドラッグ中のタスクを除外
-          if (t.id === activeId) return false;
-          // 元のボードにいたタスク、または移動先ボードにいるタスク
-          return t.board_id === targetBoardId;
-        })
+        .filter((t) => t.id !== activeId && t.board_id === targetBoardId)
         .sort((a, b) => a.sort_order - b.sort_order);
       const overIndex = boardTasks.findIndex((t) => t.id === overId);
       newIndex = overIndex === -1 ? boardTasks.length : overIndex;
@@ -714,6 +812,37 @@ export default function BoardPage() {
         .sort((a, b) => a.sort_order - b.sort_order);
       newIndex = boardTasks.length; // 末尾に追加
     } else {
+      return;
+    }
+
+    // InboxタスクをボードにD&D
+    if (!sourceBoardId) {
+      const inboxTask = inboxTasks.find((t) => t.id === activeId);
+      if (!inboxTask) return;
+
+      // Inboxから削除してtasksに追加
+      setInboxTasks((prev) => prev.filter((t) => t.id !== activeId));
+      const newTask: Task = {
+        ...inboxTask,
+        board_id: targetBoardId,
+        sort_order: newIndex,
+      };
+      setTasks((prev) => {
+        const updated = prev.map((t) => {
+          if (t.board_id === targetBoardId && t.sort_order >= newIndex) {
+            return { ...t, sort_order: t.sort_order + 1 };
+          }
+          return t;
+        });
+        return [...updated, newTask];
+      });
+
+      // API呼び出し
+      fetch(`/api/tasks/${activeId}/reorder`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ board_id: targetBoardId, sort_order: newIndex }),
+      }).catch((err) => setError(err.message));
       return;
     }
 
@@ -785,10 +914,15 @@ export default function BoardPage() {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();
       }),
+      fetch("/api/tasks/unassigned").then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      }),
     ])
-      .then(([boardsData, tasksData]) => {
+      .then(([boardsData, tasksData, inboxData]) => {
         setBoards(boardsData);
         setTasks(tasksData);
+        setInboxTasks(inboxData);
       })
       .catch((err) => setError(err.message));
   }, []);
@@ -810,6 +944,46 @@ export default function BoardPage() {
         onDragOver={handleDragOver}
         onDragEnd={handleDragEnd}
       >
+        {/* Inbox (未割り当てタスク) */}
+        {inboxTasks.length > 0 && (
+          <Paper sx={{ p: 2, mb: 3, bgcolor: "grey.50" }}>
+            <Typography variant="subtitle2" fontWeight="bold" sx={{ mb: 1.5, color: "text.secondary" }}>
+              Inbox ({inboxTasks.length})
+            </Typography>
+            <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1 }}>
+              {inboxTasks.map((task) => (
+                <InboxTaskCard
+                  key={task.id}
+                  task={task}
+                  onToggleCompleted={(t) => {
+                    fetch(`/api/tasks/${t.id}`, {
+                      method: "PATCH",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ completed: !t.completed }),
+                    })
+                      .then((res) => {
+                        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                        return res.json();
+                      })
+                      .then(() => {
+                        setInboxTasks((prev) =>
+                          prev.map((it) => (it.id === t.id ? { ...it, completed: !it.completed } : it))
+                        );
+                      })
+                      .catch((err) => setError(err.message));
+                  }}
+                  onDelete={(t) => {
+                    setInboxTasks((prev) => prev.filter((it) => it.id !== t.id));
+                    fetch(`/api/tasks/${t.id}`, { method: "DELETE" }).catch((err) =>
+                      setError(err.message)
+                    );
+                  }}
+                />
+              ))}
+            </Box>
+          </Paper>
+        )}
+
         <SortableContext
           items={boards.map((b) => b.id)}
           strategy={horizontalListSortingStrategy}

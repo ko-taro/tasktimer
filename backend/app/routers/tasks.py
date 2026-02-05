@@ -25,10 +25,19 @@ class TaskResponse(BaseModel):
     project: ProjectInfo | None
 
 
+class UnassignedTaskResponse(BaseModel):
+    """ボードに割り当てられていないタスク"""
+    id: str
+    title: str
+    description: str | None
+    completed: bool
+    project: ProjectInfo | None
+
+
 class TaskCreate(BaseModel):
     title: str
     description: str | None = None
-    board_id: str
+    board_id: str | None = None  # Noneの場合は未割り当てタスク
     project_id: str | None = None
 
 
@@ -78,13 +87,48 @@ def list_tasks() -> list[TaskResponse]:
         return [_row_to_task(row) for row in cur.fetchall()]
 
 
-@router.post("", status_code=201)
-def create_task(body: TaskCreate) -> TaskResponse:
+@router.get("/unassigned")
+def list_unassigned_tasks() -> list[UnassignedTaskResponse]:
+    """ボードに割り当てられていないタスク一覧を取得"""
     with get_conn() as conn, conn.cursor() as cur:
-        # board_id の存在確認
-        cur.execute("SELECT id FROM boards WHERE id = %s", (body.board_id,))
-        if not cur.fetchone():
-            raise HTTPException(status_code=400, detail=f"Board '{body.board_id}' not found")
+        cur.execute("""
+            SELECT t.id, t.title, t.description, t.completed,
+                   p.id AS project_id, p.name AS project_name,
+                   p.short_name AS project_short_name, p.color AS project_color
+            FROM tasks t
+            LEFT JOIN board_tasks bt ON t.id = bt.task_id
+            LEFT JOIN projects p ON t.project_id = p.id
+            WHERE bt.task_id IS NULL
+            ORDER BY t.created_at DESC
+        """)
+        results = []
+        for row in cur.fetchall():
+            project = None
+            if row.get("project_id"):
+                project = ProjectInfo(
+                    id=str(row["project_id"]),
+                    name=row["project_name"],
+                    short_name=row["project_short_name"],
+                    color=row["project_color"],
+                )
+            results.append(UnassignedTaskResponse(
+                id=str(row["id"]),
+                title=row["title"],
+                description=row["description"],
+                completed=row["completed"],
+                project=project,
+            ))
+        return results
+
+
+@router.post("", status_code=201)
+def create_task(body: TaskCreate) -> TaskResponse | UnassignedTaskResponse:
+    with get_conn() as conn, conn.cursor() as cur:
+        # board_id が指定された場合は存在確認
+        if body.board_id:
+            cur.execute("SELECT id FROM boards WHERE id = %s", (body.board_id,))
+            if not cur.fetchone():
+                raise HTTPException(status_code=400, detail=f"Board '{body.board_id}' not found")
 
         # project_id の存在確認
         project_row = None
@@ -101,20 +145,6 @@ def create_task(body: TaskCreate) -> TaskResponse:
         )
         task_row = cur.fetchone()
 
-        # 現在の最大 sort_order を取得
-        cur.execute(
-            "SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_order FROM board_tasks WHERE board_id = %s",
-            (body.board_id,),
-        )
-        next_order = cur.fetchone()["next_order"]
-
-        # board_tasks に追加
-        cur.execute(
-            "INSERT INTO board_tasks (board_id, task_id, sort_order) VALUES (%s, %s, %s)",
-            (body.board_id, task_row["id"], next_order),
-        )
-        conn.commit()
-
         project = None
         if project_row:
             project = ProjectInfo(
@@ -124,19 +154,45 @@ def create_task(body: TaskCreate) -> TaskResponse:
                 color=project_row["color"],
             )
 
-        return TaskResponse(
-            id=str(task_row["id"]),
-            title=task_row["title"],
-            description=task_row["description"],
-            board_id=body.board_id,
-            sort_order=next_order,
-            completed=task_row["completed"],
-            project=project,
-        )
+        # board_id が指定された場合のみ board_tasks に追加
+        if body.board_id:
+            # 現在の最大 sort_order を取得
+            cur.execute(
+                "SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_order FROM board_tasks WHERE board_id = %s",
+                (body.board_id,),
+            )
+            next_order = cur.fetchone()["next_order"]
+
+            # board_tasks に追加
+            cur.execute(
+                "INSERT INTO board_tasks (board_id, task_id, sort_order) VALUES (%s, %s, %s)",
+                (body.board_id, task_row["id"], next_order),
+            )
+            conn.commit()
+
+            return TaskResponse(
+                id=str(task_row["id"]),
+                title=task_row["title"],
+                description=task_row["description"],
+                board_id=body.board_id,
+                sort_order=next_order,
+                completed=task_row["completed"],
+                project=project,
+            )
+        else:
+            # 未割り当てタスク
+            conn.commit()
+            return UnassignedTaskResponse(
+                id=str(task_row["id"]),
+                title=task_row["title"],
+                description=task_row["description"],
+                completed=task_row["completed"],
+                project=project,
+            )
 
 
 @router.patch("/{task_id}")
-def update_task(task_id: str, body: TaskUpdate) -> TaskResponse:
+def update_task(task_id: str, body: TaskUpdate) -> TaskResponse | UnassignedTaskResponse:
     update_data = body.model_dump(exclude_unset=True)
     if not update_data:
         raise HTTPException(status_code=400, detail="No fields to update")
@@ -166,7 +222,7 @@ def update_task(task_id: str, body: TaskUpdate) -> TaskResponse:
             )
             current = cur.fetchone()
             if not current:
-                raise HTTPException(status_code=404, detail="Task not found")
+                raise HTTPException(status_code=404, detail="Task not found in any board")
 
             new_board_id = update_data.get("board_id", str(current["board_id"]))
             new_sort_order = update_data.get("sort_order", current["sort_order"])
@@ -189,20 +245,39 @@ def update_task(task_id: str, body: TaskUpdate) -> TaskResponse:
 
         conn.commit()
 
-        # 更新後のデータを取得して返す
+        # 更新後のデータを取得して返す（LEFT JOINで未割り当てタスクにも対応）
         cur.execute("""
             SELECT t.id, t.title, t.description, t.completed,
                    bt.board_id, bt.sort_order,
                    p.id AS project_id, p.name AS project_name,
                    p.short_name AS project_short_name, p.color AS project_color
             FROM tasks t
-            JOIN board_tasks bt ON t.id = bt.task_id
+            LEFT JOIN board_tasks bt ON t.id = bt.task_id
             LEFT JOIN projects p ON t.project_id = p.id
             WHERE t.id = %s
         """, (task_id,))
         row = cur.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Task not found")
+
+        # board_idがない場合は未割り当てタスク
+        if row["board_id"] is None:
+            project = None
+            if row.get("project_id"):
+                project = ProjectInfo(
+                    id=str(row["project_id"]),
+                    name=row["project_name"],
+                    short_name=row["project_short_name"],
+                    color=row["project_color"],
+                )
+            return UnassignedTaskResponse(
+                id=str(row["id"]),
+                title=row["title"],
+                description=row["description"],
+                completed=row["completed"],
+                project=project,
+            )
+
         return _row_to_task(row)
 
 
@@ -214,53 +289,23 @@ class TaskReorder(BaseModel):
 @router.post("/{task_id}/reorder")
 def reorder_task(task_id: str, body: TaskReorder) -> TaskResponse:
     with get_conn() as conn, conn.cursor() as cur:
-        # 現在のタスク情報を取得
+        # タスクの存在確認
+        cur.execute("SELECT id FROM tasks WHERE id = %s", (task_id,))
+        if not cur.fetchone():
+            raise HTTPException(status_code=404, detail="Task not found")
+
+        # 現在のboard_tasks情報を取得
         cur.execute(
             "SELECT board_id, sort_order FROM board_tasks WHERE task_id = %s",
             (task_id,),
         )
         current = cur.fetchone()
-        if not current:
-            raise HTTPException(status_code=404, detail="Task not found")
 
-        old_board_id = str(current["board_id"])
-        old_sort_order = current["sort_order"]
         new_board_id = body.board_id
         new_sort_order = body.sort_order
 
-        if old_board_id == new_board_id:
-            # 同じボード内での移動
-            if old_sort_order < new_sort_order:
-                # 下に移動: old_sort_order < x <= new_sort_order のタスクを -1
-                cur.execute(
-                    """
-                    UPDATE board_tasks
-                    SET sort_order = sort_order - 1
-                    WHERE board_id = %s AND sort_order > %s AND sort_order <= %s
-                    """,
-                    (new_board_id, old_sort_order, new_sort_order),
-                )
-            elif old_sort_order > new_sort_order:
-                # 上に移動: new_sort_order <= x < old_sort_order のタスクを +1
-                cur.execute(
-                    """
-                    UPDATE board_tasks
-                    SET sort_order = sort_order + 1
-                    WHERE board_id = %s AND sort_order >= %s AND sort_order < %s
-                    """,
-                    (new_board_id, new_sort_order, old_sort_order),
-                )
-        else:
-            # 別ボードへの移動
-            # 元ボードで old_sort_order より後のタスクを -1
-            cur.execute(
-                """
-                UPDATE board_tasks
-                SET sort_order = sort_order - 1
-                WHERE board_id = %s AND sort_order > %s
-                """,
-                (old_board_id, old_sort_order),
-            )
+        # 未割り当てタスクの場合は新規にboard_tasksに追加
+        if not current:
             # 新ボードで new_sort_order 以降のタスクを +1
             cur.execute(
                 """
@@ -270,16 +315,67 @@ def reorder_task(task_id: str, body: TaskReorder) -> TaskResponse:
                 """,
                 (new_board_id, new_sort_order),
             )
+            # board_tasksに挿入
+            cur.execute(
+                "INSERT INTO board_tasks (board_id, task_id, sort_order) VALUES (%s, %s, %s)",
+                (new_board_id, task_id, new_sort_order),
+            )
+        else:
+            old_board_id = str(current["board_id"])
+            old_sort_order = current["sort_order"]
 
-        # タスク自体の board_id と sort_order を更新
-        cur.execute(
-            """
-            UPDATE board_tasks
-            SET board_id = %s, sort_order = %s
-            WHERE task_id = %s
-            """,
-            (new_board_id, new_sort_order, task_id),
-        )
+            if old_board_id == new_board_id:
+                # 同じボード内での移動
+                if old_sort_order < new_sort_order:
+                    # 下に移動: old_sort_order < x <= new_sort_order のタスクを -1
+                    cur.execute(
+                        """
+                        UPDATE board_tasks
+                        SET sort_order = sort_order - 1
+                        WHERE board_id = %s AND sort_order > %s AND sort_order <= %s
+                        """,
+                        (new_board_id, old_sort_order, new_sort_order),
+                    )
+                elif old_sort_order > new_sort_order:
+                    # 上に移動: new_sort_order <= x < old_sort_order のタスクを +1
+                    cur.execute(
+                        """
+                        UPDATE board_tasks
+                        SET sort_order = sort_order + 1
+                        WHERE board_id = %s AND sort_order >= %s AND sort_order < %s
+                        """,
+                        (new_board_id, new_sort_order, old_sort_order),
+                    )
+            else:
+                # 別ボードへの移動
+                # 元ボードで old_sort_order より後のタスクを -1
+                cur.execute(
+                    """
+                    UPDATE board_tasks
+                    SET sort_order = sort_order - 1
+                    WHERE board_id = %s AND sort_order > %s
+                    """,
+                    (old_board_id, old_sort_order),
+                )
+                # 新ボードで new_sort_order 以降のタスクを +1
+                cur.execute(
+                    """
+                    UPDATE board_tasks
+                    SET sort_order = sort_order + 1
+                    WHERE board_id = %s AND sort_order >= %s
+                    """,
+                    (new_board_id, new_sort_order),
+                )
+
+            # タスク自体の board_id と sort_order を更新
+            cur.execute(
+                """
+                UPDATE board_tasks
+                SET board_id = %s, sort_order = %s
+                WHERE task_id = %s
+                """,
+                (new_board_id, new_sort_order, task_id),
+            )
 
         conn.commit()
 

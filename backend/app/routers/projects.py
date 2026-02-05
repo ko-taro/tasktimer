@@ -93,3 +93,61 @@ def delete_project(project_id: str) -> None:
         conn.commit()
         if cur.rowcount == 0:
             raise HTTPException(status_code=404, detail="Project not found")
+
+
+class ProjectTaskResponse(BaseModel):
+    """プロジェクトのタスク（ボード情報はオプション）"""
+    id: str
+    title: str
+    description: str | None
+    completed: bool
+    board_id: str | None = None
+    board_name: str | None = None
+    sort_order: int | None = None
+
+
+@router.get("/{project_id}")
+def get_project(project_id: str) -> ProjectResponse:
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT id, name, short_name, color FROM projects WHERE id = %s",
+            (project_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Project not found")
+        return _row_to_project(row)
+
+
+@router.get("/{project_id}/tasks")
+def list_project_tasks(project_id: str) -> list[ProjectTaskResponse]:
+    """プロジェクトに属するタスク一覧を取得（ボード割り当て有無問わず）"""
+    with get_conn() as conn, conn.cursor() as cur:
+        # プロジェクトの存在確認
+        cur.execute("SELECT id FROM projects WHERE id = %s", (project_id,))
+        if not cur.fetchone():
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        # タスク一覧を取得（board_tasks との LEFT JOIN で未割り当ても含む）
+        cur.execute("""
+            SELECT t.id, t.title, t.description, t.completed,
+                   bt.board_id, b.label AS board_name, bt.sort_order
+            FROM tasks t
+            LEFT JOIN board_tasks bt ON t.id = bt.task_id
+            LEFT JOIN boards b ON bt.board_id = b.id
+            WHERE t.project_id = %s
+            ORDER BY t.created_at DESC
+        """, (project_id,))
+
+        return [
+            ProjectTaskResponse(
+                id=str(row["id"]),
+                title=row["title"],
+                description=row["description"],
+                completed=row["completed"],
+                board_id=str(row["board_id"]) if row["board_id"] else None,
+                board_name=row["board_name"],
+                sort_order=row["sort_order"],
+            )
+            for row in cur.fetchall()
+        ]
