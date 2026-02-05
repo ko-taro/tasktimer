@@ -323,7 +323,15 @@ export default function BoardPage() {
               {visibleBoards.map((board) => {
                 const boardTasks = tasks
                   .filter((t) => t.board_id === board.id)
-                  .sort((a, b) => a.sort_order - b.sort_order);
+                  .sort((a, b) => {
+                    // 完了タスクは下に配置
+                    const aCompleted = a.completed_at ? 1 : 0;
+                    const bCompleted = b.completed_at ? 1 : 0;
+                    if (aCompleted !== bCompleted) {
+                      return aCompleted - bCompleted;
+                    }
+                    return a.sort_order - b.sort_order;
+                  });
                 return (
                   <SortableColumn
                     key={board.id}
