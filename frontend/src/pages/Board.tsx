@@ -4,9 +4,22 @@ import {
   Button,
   Card,
   CardContent,
+  Checkbox,
   Chip,
   ClickAwayListener,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogContentText,
+  DialogTitle,
+  Drawer,
+  FormControlLabel,
   IconButton,
+  List,
+  ListItem,
+  ListItemButton,
+  ListItemIcon,
+  ListItemText,
   Paper,
   Snackbar,
   Stack,
@@ -20,6 +33,9 @@ import DeleteIcon from "@mui/icons-material/Delete";
 import ArchiveIcon from "@mui/icons-material/Archive";
 import DragIndicatorIcon from "@mui/icons-material/DragIndicator";
 import DragHandleIcon from "@mui/icons-material/DragHandle";
+import MenuIcon from "@mui/icons-material/Menu";
+import EditIcon from "@mui/icons-material/Edit";
+import ViewColumnIcon from "@mui/icons-material/ViewColumn";
 import {
   DndContext,
   DragOverlay,
@@ -434,21 +450,19 @@ function InboxTaskCard({
     <Card
       ref={setNodeRef}
       style={style}
-      sx={{ minWidth: 200, maxWidth: 300, borderRadius: 1.5 }}
+      sx={{ minWidth: 200, maxWidth: 300, borderRadius: 1.5, cursor: "grab" }}
+      {...attributes}
+      {...listeners}
     >
       <CardContent sx={{ py: 1, "&:last-child": { pb: 1 } }}>
         <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-          <Box
-            {...attributes}
-            {...listeners}
-            sx={{ cursor: "grab", display: "flex", color: "text.disabled" }}
-          >
-            <DragIndicatorIcon fontSize="small" />
-          </Box>
           <IconButton
             size="small"
             sx={{ p: 0, flexShrink: 0 }}
-            onClick={() => onToggleCompleted(task)}
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleCompleted(task);
+            }}
           >
             {task.completed ? (
               <CheckCircleIcon color="success" fontSize="small" />
@@ -480,12 +494,61 @@ function InboxTaskCard({
               {task.title}
             </Typography>
           </Box>
-          <IconButton size="small" onClick={() => onDelete(task)} sx={{ p: 0.25 }}>
+          <IconButton
+            size="small"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete(task);
+            }}
+            sx={{ p: 0.25 }}
+          >
             <DeleteIcon fontSize="small" />
           </IconButton>
         </Box>
       </CardContent>
     </Card>
+  );
+}
+
+const SIDEBAR_WIDTH = 280;
+
+// ボード用プリセットカラー（パステル調の背景色）
+const BOARD_COLORS = [
+  "#fce4ec", // ピンク
+  "#fff3e0", // オレンジ
+  "#fff9c4", // イエロー
+  "#e8f5e9", // グリーン
+  "#e3f2fd", // ブルー
+  "#ede7f6", // パープル
+  "#fafafa", // グレー
+  "#e0f7fa", // シアン
+];
+
+function BoardColorPicker({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (color: string) => void;
+}) {
+  return (
+    <Box sx={{ display: "flex", gap: 0.5, flexWrap: "wrap" }}>
+      {BOARD_COLORS.map((color) => (
+        <Box
+          key={color}
+          onClick={() => onChange(color)}
+          sx={{
+            width: 24,
+            height: 24,
+            bgcolor: color,
+            borderRadius: 0.5,
+            cursor: "pointer",
+            border: value === color ? "2px solid #333" : "2px solid #ddd",
+            "&:hover": { opacity: 0.8 },
+          }}
+        />
+      ))}
+    </Box>
   );
 }
 
@@ -509,6 +572,23 @@ export default function BoardPage() {
     position: "before" | "after";
   } | null>(null);
 
+  // サイドバー関連（localStorageから初期値を読み込み）
+  const [sidebarOpen, setSidebarOpen] = useState(() => {
+    const saved = localStorage.getItem("board-sidebar-open");
+    return saved ? JSON.parse(saved) : false;
+  });
+  const [hiddenBoards, setHiddenBoards] = useState<Set<string>>(() => {
+    const saved = localStorage.getItem("board-hidden-boards");
+    return saved ? new Set(JSON.parse(saved)) : new Set();
+  });
+  const [isAddingBoard, setIsAddingBoard] = useState(false);
+  const [newBoardLabel, setNewBoardLabel] = useState("");
+  const [newBoardColor, setNewBoardColor] = useState("#e3f2fd");
+  const [editingBoardId, setEditingBoardId] = useState<string | null>(null);
+  const [editingBoardLabel, setEditingBoardLabel] = useState("");
+  const [editingBoardColor, setEditingBoardColor] = useState("");
+  const [deletingBoardId, setDeletingBoardId] = useState<string | null>(null);
+
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
@@ -516,6 +596,15 @@ export default function BoardPage() {
       },
     })
   );
+
+  // サイドバー状態をlocalStorageに保存
+  useEffect(() => {
+    localStorage.setItem("board-sidebar-open", JSON.stringify(sidebarOpen));
+  }, [sidebarOpen]);
+
+  useEffect(() => {
+    localStorage.setItem("board-hidden-boards", JSON.stringify([...hiddenBoards]));
+  }, [hiddenBoards]);
 
   const handleAddTask = (boardId: string) => {
     const title = newTaskTitle.trim();
@@ -642,6 +731,107 @@ export default function BoardPage() {
       })
       .catch((err) => setError(err.message));
   };
+
+  // ボード管理関連
+  const handleAddBoard = () => {
+    const label = newBoardLabel.trim();
+    if (!label) {
+      setIsAddingBoard(false);
+      setNewBoardLabel("");
+      return;
+    }
+    fetch("/api/boards", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ label, color: newBoardColor }),
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then((board: Board) => {
+        setBoards((prev) => [...prev, board]);
+        setNewBoardLabel("");
+        setNewBoardColor("#e3f2fd");
+        setIsAddingBoard(false);
+      })
+      .catch((err) => setError(err.message));
+  };
+
+  const handleUpdateBoard = (boardId: string) => {
+    const label = editingBoardLabel.trim();
+    if (!label) {
+      setEditingBoardId(null);
+      return;
+    }
+    fetch(`/api/boards/${boardId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ label, color: editingBoardColor }),
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then((updated: Board) => {
+        setBoards((prev) =>
+          prev.map((b) => (b.id === updated.id ? updated : b))
+        );
+        setEditingBoardId(null);
+      })
+      .catch((err) => setError(err.message));
+  };
+
+  const handleDeleteBoard = (boardId: string) => {
+    setDeletingBoardId(boardId);
+  };
+
+  const confirmDeleteBoard = () => {
+    if (!deletingBoardId) return;
+    const boardId = deletingBoardId;
+    setDeletingBoardId(null);
+
+    fetch(`/api/boards/${boardId}`, { method: "DELETE" })
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        setBoards((prev) => prev.filter((b) => b.id !== boardId));
+        // ボード内のタスクを未割り当てに移動
+        const boardTaskIds = tasks.filter((t) => t.board_id === boardId).map((t) => t.id);
+        setTasks((prev) => prev.filter((t) => t.board_id !== boardId));
+        // 未割り当てタスクとして追加
+        boardTaskIds.forEach((taskId) => {
+          const task = tasks.find((t) => t.id === taskId);
+          if (task) {
+            setInboxTasks((prev) => [
+              ...prev,
+              {
+                id: task.id,
+                title: task.title,
+                description: task.description,
+                completed: task.completed,
+                archived_at: task.archived_at,
+                project: task.project,
+              },
+            ]);
+          }
+        });
+      })
+      .catch((err) => setError(err.message));
+  };
+
+  const toggleBoardVisibility = (boardId: string) => {
+    setHiddenBoards((prev) => {
+      const next = new Set(prev);
+      if (next.has(boardId)) {
+        next.delete(boardId);
+      } else {
+        next.add(boardId);
+      }
+      return next;
+    });
+  };
+
+  const visibleBoards = boards.filter((b) => !hiddenBoards.has(b.id));
 
   const handleDragStart = (event: DragStartEvent) => {
     const activeId = event.active.id as string;
@@ -973,21 +1163,192 @@ export default function BoardPage() {
   }
 
   return (
-    <>
-      <DndContext
-        sensors={sensors}
-        collisionDetection={pointerWithin}
-        onDragStart={handleDragStart}
-        onDragOver={handleDragOver}
-        onDragEnd={handleDragEnd}
+    <Box sx={{ display: "flex" }}>
+      {/* サイドバー */}
+      <Drawer
+        variant="persistent"
+        anchor="left"
+        open={sidebarOpen}
+        sx={{
+          width: sidebarOpen ? SIDEBAR_WIDTH : 0,
+          flexShrink: 0,
+          "& .MuiDrawer-paper": {
+            width: SIDEBAR_WIDTH,
+            boxSizing: "border-box",
+            position: "relative",
+          },
+        }}
       >
-        {/* Inbox (未割り当てタスク) */}
-        {inboxTasks.length > 0 && (
-          <Paper sx={{ p: 2, mb: 3, bgcolor: "grey.50" }}>
-            <Typography variant="subtitle2" fontWeight="bold" sx={{ mb: 1.5, color: "text.secondary" }}>
-              Inbox ({inboxTasks.length})
+        <Box sx={{ p: 2 }}>
+          <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", mb: 2 }}>
+            <Typography variant="h6" fontWeight="bold">
+              <ViewColumnIcon sx={{ mr: 1, verticalAlign: "middle" }} />
+              ボード管理
             </Typography>
-            <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1 }}>
+            <IconButton size="small" onClick={() => setSidebarOpen(false)}>
+              <MenuIcon />
+            </IconButton>
+          </Box>
+
+          {/* ボード一覧 */}
+          <List dense>
+            {boards.map((board) => (
+              <ListItem
+                key={board.id}
+                disablePadding
+                secondaryAction={
+                  editingBoardId !== board.id && (
+                    <Box>
+                      <IconButton
+                        size="small"
+                        onClick={() => {
+                          setEditingBoardId(board.id);
+                          setEditingBoardLabel(board.label);
+                          setEditingBoardColor(board.color);
+                        }}
+                      >
+                        <EditIcon fontSize="small" />
+                      </IconButton>
+                      <IconButton
+                        size="small"
+                        onClick={() => handleDeleteBoard(board.id)}
+                      >
+                        <DeleteIcon fontSize="small" />
+                      </IconButton>
+                    </Box>
+                  )
+                }
+              >
+                {editingBoardId === board.id ? (
+                  <Box sx={{ p: 1, width: "100%" }}>
+                    <TextField
+                      size="small"
+                      fullWidth
+                      value={editingBoardLabel}
+                      onChange={(e) => setEditingBoardLabel(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") handleUpdateBoard(board.id);
+                        if (e.key === "Escape") setEditingBoardId(null);
+                      }}
+                      sx={{ mb: 1 }}
+                    />
+                    <Box sx={{ mb: 1 }}>
+                      <BoardColorPicker value={editingBoardColor} onChange={setEditingBoardColor} />
+                    </Box>
+                    <Box sx={{ display: "flex", gap: 1 }}>
+                      <Button size="small" onClick={() => handleUpdateBoard(board.id)}>
+                        保存
+                      </Button>
+                      <Button size="small" onClick={() => setEditingBoardId(null)}>
+                        キャンセル
+                      </Button>
+                    </Box>
+                  </Box>
+                ) : (
+                  <ListItemButton onClick={() => toggleBoardVisibility(board.id)}>
+                    <ListItemIcon sx={{ minWidth: 36 }}>
+                      <Checkbox
+                        edge="start"
+                        checked={!hiddenBoards.has(board.id)}
+                        tabIndex={-1}
+                        disableRipple
+                        size="small"
+                      />
+                    </ListItemIcon>
+                    <Box
+                      sx={{
+                        width: 16,
+                        height: 16,
+                        bgcolor: board.color,
+                        borderRadius: 0.5,
+                        mr: 1,
+                        flexShrink: 0,
+                      }}
+                    />
+                    <ListItemText primary={board.label} />
+                  </ListItemButton>
+                )}
+              </ListItem>
+            ))}
+          </List>
+
+          {/* ボード追加フォーム */}
+          {isAddingBoard ? (
+            <Box sx={{ mt: 2 }}>
+              <TextField
+                autoFocus
+                size="small"
+                fullWidth
+                placeholder="ボード名"
+                value={newBoardLabel}
+                onChange={(e) => setNewBoardLabel(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleAddBoard();
+                  if (e.key === "Escape") {
+                    setIsAddingBoard(false);
+                    setNewBoardLabel("");
+                  }
+                }}
+                sx={{ mb: 1 }}
+              />
+              <Box sx={{ mb: 1 }}>
+                <BoardColorPicker value={newBoardColor} onChange={setNewBoardColor} />
+              </Box>
+              <Box sx={{ display: "flex", gap: 1 }}>
+                <Button size="small" variant="contained" onClick={handleAddBoard}>
+                  追加
+                </Button>
+                <Button
+                  size="small"
+                  onClick={() => {
+                    setIsAddingBoard(false);
+                    setNewBoardLabel("");
+                  }}
+                >
+                  キャンセル
+                </Button>
+              </Box>
+            </Box>
+          ) : (
+            <Button
+              startIcon={<AddIcon />}
+              fullWidth
+              sx={{ mt: 2 }}
+              onClick={() => setIsAddingBoard(true)}
+            >
+              ボードを追加
+            </Button>
+          )}
+        </Box>
+      </Drawer>
+
+      {/* メインコンテンツ */}
+      <Box sx={{ flexGrow: 1, p: 2 }}>
+        {/* サイドバー開閉ボタン */}
+        {!sidebarOpen && (
+          <IconButton
+            onClick={() => setSidebarOpen(true)}
+            sx={{ mb: 2 }}
+            title="ボード管理を開く"
+          >
+            <MenuIcon />
+          </IconButton>
+        )}
+
+        <DndContext
+          sensors={sensors}
+          collisionDetection={pointerWithin}
+          onDragStart={handleDragStart}
+          onDragOver={handleDragOver}
+          onDragEnd={handleDragEnd}
+        >
+          {/* Inbox (未割り当てタスク) */}
+          {inboxTasks.length > 0 && (
+            <Paper sx={{ p: 2, mb: 3, bgcolor: "grey.50" }}>
+              <Typography variant="subtitle2" fontWeight="bold" sx={{ mb: 1.5, color: "text.secondary" }}>
+                Inbox ({inboxTasks.length})
+              </Typography>
+              <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1 }}>
               {inboxTasks.map((task) => (
                 <InboxTaskCard
                   key={task.id}
@@ -1022,17 +1383,17 @@ export default function BoardPage() {
         )}
 
         <SortableContext
-          items={boards.map((b) => b.id)}
+          items={visibleBoards.map((b) => b.id)}
           strategy={horizontalListSortingStrategy}
         >
           <Box
             sx={{
               display: "grid",
-              gridTemplateColumns: { xs: "1fr", md: `repeat(${boards.length}, 1fr)` },
+              gridTemplateColumns: { xs: "1fr", md: `repeat(${visibleBoards.length}, 1fr)` },
               gap: 2,
             }}
           >
-            {boards.map((board) => {
+            {visibleBoards.map((board) => {
               const boardTasks = tasks
                 .filter((t) => t.board_id === board.id)
                 .sort((a, b) => a.sort_order - b.sort_order);
@@ -1170,18 +1531,39 @@ export default function BoardPage() {
             </Paper>
           )}
         </DragOverlay>
-      </DndContext>
-      <Snackbar
-        open={deletedTask !== null}
-        autoHideDuration={5000}
-        onClose={() => setDeletedTask(null)}
-        message={`「${deletedTask?.title}」を削除しました`}
-        action={
-          <Button color="inherit" size="small" onClick={handleUndoDelete}>
-            元に戻す
-          </Button>
-        }
-      />
-    </>
+        </DndContext>
+        <Snackbar
+          open={deletedTask !== null}
+          autoHideDuration={5000}
+          onClose={() => setDeletedTask(null)}
+          message={`「${deletedTask?.title}」を削除しました`}
+          action={
+            <Button color="inherit" size="small" onClick={handleUndoDelete}>
+              元に戻す
+            </Button>
+          }
+        />
+
+        {/* ボード削除確認ダイアログ */}
+        <Dialog
+          open={deletingBoardId !== null}
+          onClose={() => setDeletingBoardId(null)}
+        >
+          <DialogTitle>ボードを削除</DialogTitle>
+          <DialogContent>
+            <DialogContentText>
+              「{boards.find((b) => b.id === deletingBoardId)?.label}」を削除しますか？
+              ボード内のタスクは未割り当てになります。
+            </DialogContentText>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setDeletingBoardId(null)}>キャンセル</Button>
+            <Button onClick={confirmDeleteBoard} color="error" variant="contained">
+              削除
+            </Button>
+          </DialogActions>
+        </Dialog>
+      </Box>
+    </Box>
   );
 }

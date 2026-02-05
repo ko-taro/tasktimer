@@ -88,6 +88,7 @@ export default function ProjectDetail() {
             title: task.title,
             description: task.description,
             completed: task.completed,
+            archived_at: null,
             board_id: null,
             board_name: null,
             sort_order: null,
