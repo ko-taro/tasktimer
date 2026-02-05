@@ -18,6 +18,7 @@ import RadioButtonUncheckedIcon from "@mui/icons-material/RadioButtonUnchecked";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import DeleteIcon from "@mui/icons-material/Delete";
 import DragIndicatorIcon from "@mui/icons-material/DragIndicator";
+import DragHandleIcon from "@mui/icons-material/DragHandle";
 import {
   DndContext,
   DragOverlay,
@@ -34,6 +35,7 @@ import {
   SortableContext,
   useSortable,
   verticalListSortingStrategy,
+  horizontalListSortingStrategy,
   arrayMove,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -61,30 +63,104 @@ type Board = {
   color: string;
 };
 
-function DroppableColumn({
+function SortableColumn({
   board,
   children,
+  onAddClick,
+  taskCount,
+  showIndicator,
 }: {
   board: Board;
   children: React.ReactNode;
+  onAddClick: () => void;
+  taskCount: number;
+  showIndicator?: "before" | "after" | null;
 }) {
-  const { setNodeRef, isOver } = useDroppable({ id: board.id });
+  const { setNodeRef: setDroppableRef, isOver } = useDroppable({
+    id: `droppable-${board.id}`,
+  });
+  const {
+    attributes,
+    listeners,
+    setNodeRef: setSortableRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: board.id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  const indicatorStyle = {
+    position: "absolute" as const,
+    top: 0,
+    bottom: 0,
+    width: 4,
+    bgcolor: "primary.main",
+    borderRadius: 2,
+    zIndex: 10,
+  };
+
   return (
-    <Paper
-      ref={setNodeRef}
-      elevation={0}
-      sx={{
-        bgcolor: board.color,
-        p: 2,
-        borderRadius: 2,
-        minHeight: 300,
-        outline: isOver ? "2px solid" : "none",
-        outlineColor: "primary.main",
-        transition: "outline 0.15s",
-      }}
-    >
-      {children}
-    </Paper>
+    <Box sx={{ position: "relative" }}>
+      {showIndicator === "before" && (
+        <Box sx={{ ...indicatorStyle, left: -10 }} />
+      )}
+      <Paper
+        ref={(node) => {
+          setSortableRef(node);
+          setDroppableRef(node);
+        }}
+        elevation={0}
+        sx={{
+          bgcolor: board.color,
+          p: 2,
+          borderRadius: 2,
+          minHeight: 300,
+          outline: isOver ? "2px solid" : "none",
+          outlineColor: "primary.main",
+        }}
+        style={style}
+        {...attributes}
+      >
+        <Box
+          {...listeners}
+          sx={{
+            display: "flex",
+            justifyContent: "center",
+            cursor: "grab",
+            color: "text.disabled",
+            mb: 0.5,
+            mx: -1,
+            mt: -1,
+            py: 0.5,
+            "&:hover": {
+              color: "text.secondary",
+              bgcolor: "action.hover",
+              borderRadius: 1,
+            },
+          }}
+        >
+          <DragHandleIcon fontSize="small" />
+        </Box>
+        <Box sx={{ display: "flex", alignItems: "center", mb: 2 }}>
+          <Typography variant="subtitle1" fontWeight="bold">
+            {board.label}
+          </Typography>
+          <Chip label={taskCount} size="small" sx={{ ml: 1 }} />
+          <IconButton size="small" sx={{ ml: "auto" }} onClick={onAddClick}>
+            <AddIcon fontSize="small" />
+          </IconButton>
+        </Box>
+        {children}
+      </Paper>
+      {showIndicator === "after" && (
+        <Box sx={{ ...indicatorStyle, right: -10 }} />
+      )}
+    </Box>
   );
 }
 
@@ -296,7 +372,12 @@ export default function BoardPage() {
   const [newTaskTitle, setNewTaskTitle] = useState("");
   const [deletedTask, setDeletedTask] = useState<Task | null>(null);
   const [activeTask, setActiveTask] = useState<Task | null>(null);
+  const [activeBoard, setActiveBoard] = useState<Board | null>(null);
   const [originalBoardId, setOriginalBoardId] = useState<string | null>(null);
+  const [boardDropIndicator, setBoardDropIndicator] = useState<{
+    boardId: string;
+    position: "before" | "after";
+  } | null>(null);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -416,24 +497,64 @@ export default function BoardPage() {
   };
 
   const handleDragStart = (event: DragStartEvent) => {
-    const task = tasks.find((t) => t.id === event.active.id);
+    const activeId = event.active.id as string;
+
+    // ボードをドラッグしているか確認
+    const board = boards.find((b) => b.id === activeId);
+    if (board) {
+      setActiveBoard(board);
+      setActiveTask(null);
+      return;
+    }
+
+    // タスクをドラッグ
+    const task = tasks.find((t) => t.id === activeId);
     setActiveTask(task ?? null);
+    setActiveBoard(null);
     setOriginalBoardId(task?.board_id ?? null);
   };
 
   const handleDragOver = (event: DragOverEvent) => {
     const { active, over } = event;
-    if (!over) return;
+    if (!over) {
+      setBoardDropIndicator(null);
+      return;
+    }
 
     const activeId = active.id as string;
-    const overId = over.id as string;
+    let overId = over.id as string;
 
-    const activeTask = tasks.find((t) => t.id === activeId);
-    if (!activeTask) return;
+    // ボードをドラッグ中
+    if (boards.find((b) => b.id === activeId)) {
+      // droppable-プレフィックスを除去
+      if (overId.startsWith("droppable-")) {
+        overId = overId.replace("droppable-", "");
+      }
 
-    // over がボードかタスクかを判定
+      const activeIndex = boards.findIndex((b) => b.id === activeId);
+      const overIndex = boards.findIndex((b) => b.id === overId);
+
+      if (overIndex !== -1 && activeIndex !== overIndex) {
+        // 移動方向に応じてインジケーター位置を決定
+        const position = activeIndex < overIndex ? "after" : "before";
+        setBoardDropIndicator({ boardId: overId, position });
+      } else {
+        setBoardDropIndicator(null);
+      }
+      return;
+    }
+
+    const activeTaskItem = tasks.find((t) => t.id === activeId);
+    if (!activeTaskItem) return;
+
+    // over がボードかタスクかを判定（droppable-プレフィックスを考慮）
     const overTask = tasks.find((t) => t.id === overId);
-    const overBoard = boards.find((b) => b.id === overId);
+    const overBoardId = overId.startsWith("droppable-")
+      ? overId.replace("droppable-", "")
+      : null;
+    const overBoard = overBoardId
+      ? boards.find((b) => b.id === overBoardId)
+      : boards.find((b) => b.id === overId);
 
     let targetBoardId: string;
     if (overTask) {
@@ -445,7 +566,7 @@ export default function BoardPage() {
     }
 
     // 異なるボードへ移動する場合、タスクのboard_idを一時的に更新
-    if (activeTask.board_id !== targetBoardId) {
+    if (activeTaskItem.board_id !== targetBoardId) {
       setTasks((prev) =>
         prev.map((t) =>
           t.id === activeId ? { ...t, board_id: targetBoardId } : t
@@ -455,15 +576,46 @@ export default function BoardPage() {
   };
 
   const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    const activeId = active.id as string;
+
+    // ボードのドラッグ終了
+    if (activeBoard) {
+      setActiveBoard(null);
+      setBoardDropIndicator(null);
+      if (!over) return;
+
+      let overId = over.id as string;
+      // droppable-プレフィックスを除去
+      if (overId.startsWith("droppable-")) {
+        overId = overId.replace("droppable-", "");
+      }
+      if (activeId === overId) return;
+
+      const oldIndex = boards.findIndex((b) => b.id === activeId);
+      const newIndex = boards.findIndex((b) => b.id === overId);
+      if (oldIndex === -1 || newIndex === -1) return;
+
+      const reordered = arrayMove(boards, oldIndex, newIndex);
+      setBoards(reordered);
+
+      // API呼び出し
+      fetch(`/api/boards/${activeId}/reorder`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sort_order: newIndex }),
+      }).catch((err) => setError(err.message));
+      return;
+    }
+
+    // タスクのドラッグ終了
     setActiveTask(null);
     const sourceBoardId = originalBoardId;
     setOriginalBoardId(null);
 
-    const { active, over } = event;
     if (!over || !sourceBoardId) {
       // ドラッグがキャンセルされた場合、board_idを元に戻す
       if (sourceBoardId) {
-        const activeId = active.id as string;
         setTasks((prev) =>
           prev.map((t) =>
             t.id === activeId ? { ...t, board_id: sourceBoardId } : t
@@ -473,12 +625,16 @@ export default function BoardPage() {
       return;
     }
 
-    const activeId = active.id as string;
     const overId = over.id as string;
 
-    // over がボードかタスクかを判定
+    // over がボードかタスクかを判定（droppable-プレフィックスを考慮）
     const overTask = tasks.find((t) => t.id === overId);
-    const overBoard = boards.find((b) => b.id === overId);
+    const overBoardId = overId.startsWith("droppable-")
+      ? overId.replace("droppable-", "")
+      : null;
+    const overBoard = overBoardId
+      ? boards.find((b) => b.id === overBoardId)
+      : boards.find((b) => b.id === overId);
 
     let targetBoardId: string;
     let newIndex: number;
@@ -587,96 +743,94 @@ export default function BoardPage() {
         onDragOver={handleDragOver}
         onDragEnd={handleDragEnd}
       >
-        <Box
-          sx={{
-            display: "grid",
-            gridTemplateColumns: { xs: "1fr", md: `repeat(${boards.length}, 1fr)` },
-            gap: 2,
-          }}
+        <SortableContext
+          items={boards.map((b) => b.id)}
+          strategy={horizontalListSortingStrategy}
         >
-          {boards.map((board) => {
-            const boardTasks = tasks
-              .filter((t) => t.board_id === board.id)
-              .sort((a, b) => a.sort_order - b.sort_order);
-            return (
-              <DroppableColumn key={board.id} board={board}>
-                <Box sx={{ display: "flex", alignItems: "center", mb: 2 }}>
-                  <Typography variant="subtitle1" fontWeight="bold">
-                    {board.label}
-                  </Typography>
-                  <Chip
-                    label={boardTasks.length}
-                    size="small"
-                    sx={{ ml: 1 }}
-                  />
-                  <IconButton
-                    size="small"
-                    sx={{ ml: "auto" }}
-                    onClick={() => setAddingTo(board.id)}
-                  >
-                    <AddIcon fontSize="small" />
-                  </IconButton>
-                </Box>
-                {addingTo === board.id && (
-                  <Card sx={{ borderRadius: 1.5, mb: 1.5 }}>
-                    <CardContent sx={{ py: 1.5, "&:last-child": { pb: 1.5 } }}>
-                      <TextField
-                        autoFocus
-                        fullWidth
-                        size="small"
-                        placeholder="タスク名を入力"
-                        value={newTaskTitle}
-                        onChange={(e) => setNewTaskTitle(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") handleAddTask(board.id);
-                          if (e.key === "Escape") {
-                            setAddingTo(null);
-                            setNewTaskTitle("");
-                          }
-                        }}
-                      />
-                      <Box sx={{ display: "flex", gap: 1, mt: 1 }}>
-                        <Button
-                          size="small"
-                          variant="contained"
-                          onClick={() => handleAddTask(board.id)}
-                        >
-                          追加
-                        </Button>
-                        <Button
-                          size="small"
-                          onClick={() => {
-                            setAddingTo(null);
-                            setNewTaskTitle("");
-                          }}
-                        >
-                          キャンセル
-                        </Button>
-                      </Box>
-                    </CardContent>
-                  </Card>
-                )}
-                <SortableContext
-                  items={boardTasks.map((t) => t.id)}
-                  strategy={verticalListSortingStrategy}
+          <Box
+            sx={{
+              display: "grid",
+              gridTemplateColumns: { xs: "1fr", md: `repeat(${boards.length}, 1fr)` },
+              gap: 2,
+            }}
+          >
+            {boards.map((board) => {
+              const boardTasks = tasks
+                .filter((t) => t.board_id === board.id)
+                .sort((a, b) => a.sort_order - b.sort_order);
+              return (
+                <SortableColumn
+                  key={board.id}
+                  board={board}
+                  taskCount={boardTasks.length}
+                  onAddClick={() => setAddingTo(board.id)}
+                  showIndicator={
+                    boardDropIndicator?.boardId === board.id
+                      ? boardDropIndicator.position
+                      : null
+                  }
                 >
-                  <Stack spacing={1.5}>
-                    {boardTasks.map((task) => (
-                      <DraggableCard
-                        key={task.id}
-                        task={task}
-                        onUpdateTitle={handleUpdateTitle}
-                        onUpdateDescription={handleUpdateDescription}
-                        onToggleCompleted={handleToggleCompleted}
-                        onDelete={handleDelete}
-                      />
-                    ))}
-                  </Stack>
-                </SortableContext>
-              </DroppableColumn>
-            );
-          })}
-        </Box>
+                  {addingTo === board.id && (
+                    <Card sx={{ borderRadius: 1.5, mb: 1.5 }}>
+                      <CardContent sx={{ py: 1.5, "&:last-child": { pb: 1.5 } }}>
+                        <TextField
+                          autoFocus
+                          fullWidth
+                          size="small"
+                          placeholder="タスク名を入力"
+                          value={newTaskTitle}
+                          onChange={(e) => setNewTaskTitle(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") handleAddTask(board.id);
+                            if (e.key === "Escape") {
+                              setAddingTo(null);
+                              setNewTaskTitle("");
+                            }
+                          }}
+                        />
+                        <Box sx={{ display: "flex", gap: 1, mt: 1 }}>
+                          <Button
+                            size="small"
+                            variant="contained"
+                            onClick={() => handleAddTask(board.id)}
+                          >
+                            追加
+                          </Button>
+                          <Button
+                            size="small"
+                            onClick={() => {
+                              setAddingTo(null);
+                              setNewTaskTitle("");
+                            }}
+                          >
+                            キャンセル
+                          </Button>
+                        </Box>
+                      </CardContent>
+                    </Card>
+                  )}
+                  <SortableContext
+                    items={boardTasks.map((t) => t.id)}
+                    strategy={verticalListSortingStrategy}
+                  >
+                    <Stack spacing={1.5}>
+                      {boardTasks.map((task) => (
+                        <DraggableCard
+                          key={task.id}
+                          task={task}
+                          onUpdateTitle={handleUpdateTitle}
+                          onUpdateDescription={handleUpdateDescription}
+                          onToggleCompleted={handleToggleCompleted}
+                          onDelete={handleDelete}
+                        />
+                      ))}
+                    </Stack>
+                  </SortableContext>
+                </SortableColumn>
+              );
+            })}
+          </Box>
+        </SortableContext>
         <DragOverlay>
           {activeTask && (
             <Card sx={{ borderRadius: 1.5, boxShadow: 4, opacity: 0.9 }}>
@@ -715,6 +869,32 @@ export default function BoardPage() {
                 </Box>
               </CardContent>
             </Card>
+          )}
+          {activeBoard && (
+            <Paper
+              elevation={4}
+              sx={{
+                bgcolor: activeBoard.color,
+                p: 2,
+                borderRadius: 2,
+                opacity: 0.9,
+                minWidth: 200,
+              }}
+            >
+              <Box
+                sx={{
+                  display: "flex",
+                  justifyContent: "center",
+                  color: "text.disabled",
+                  mb: 0.5,
+                }}
+              >
+                <DragHandleIcon fontSize="small" />
+              </Box>
+              <Typography variant="subtitle1" fontWeight="bold">
+                {activeBoard.label}
+              </Typography>
+            </Paper>
           )}
         </DragOverlay>
       </DndContext>
