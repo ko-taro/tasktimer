@@ -70,7 +70,9 @@ type Task = {
   description: string | null;
   board_id: string;
   sort_order: number;
-  completed: boolean;
+  scheduled_start: string | null;
+  scheduled_end: string | null;
+  completed_at: string | null;
   archived_at: string | null;
   project: Project | null;
 };
@@ -79,7 +81,9 @@ type InboxTask = {
   id: string;
   title: string;
   description: string | null;
-  completed: boolean;
+  scheduled_start: string | null;
+  scheduled_end: string | null;
+  completed_at: string | null;
   archived_at: string | null;
   project: Project | null;
 };
@@ -300,7 +304,7 @@ function DraggableCard({
             }}
             sx={{ p: 0, flexShrink: 0 }}
           >
-            {task.completed ? (
+            {task.completed_at ? (
               <CheckCircleIcon color="success" fontSize="small" />
             ) : (
               <RadioButtonUncheckedIcon
@@ -355,7 +359,7 @@ function DraggableCard({
                   overflow: "hidden",
                   textOverflow: "ellipsis",
                   whiteSpace: "nowrap",
-                  ...(task.completed && {
+                  ...(task.completed_at && {
                     textDecoration: "line-through",
                     color: "text.disabled",
                   }),
@@ -366,7 +370,7 @@ function DraggableCard({
             </Box>
           )}
           <Box sx={{ display: "flex", alignItems: "center", ml: "auto", flexShrink: 0 }}>
-            {task.completed && (
+            {task.completed_at && (
               <IconButton
                 size="small"
                 onClick={(e) => {
@@ -464,7 +468,7 @@ function InboxTaskCard({
               onToggleCompleted(task);
             }}
           >
-            {task.completed ? (
+            {task.completed_at ? (
               <CheckCircleIcon color="success" fontSize="small" />
             ) : (
               <RadioButtonUncheckedIcon fontSize="small" sx={{ color: "text.secondary" }} />
@@ -487,8 +491,8 @@ function InboxTaskCard({
               variant="body2"
               noWrap
               sx={{
-                textDecoration: task.completed ? "line-through" : "none",
-                color: task.completed ? "text.secondary" : "text.primary",
+                textDecoration: task.completed_at ? "line-through" : "none",
+                color: task.completed_at ? "text.secondary" : "text.primary",
               }}
             >
               {task.title}
@@ -701,7 +705,7 @@ export default function BoardPage() {
     fetch(`/api/tasks/${task.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ completed: !task.completed }),
+      body: JSON.stringify({ completed: !task.completed_at }),
     })
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -808,7 +812,9 @@ export default function BoardPage() {
                 id: task.id,
                 title: task.title,
                 description: task.description,
-                completed: task.completed,
+                scheduled_start: task.scheduled_start,
+                scheduled_end: task.scheduled_end,
+                completed_at: task.completed_at,
                 archived_at: task.archived_at,
                 project: task.project,
               },
@@ -1357,15 +1363,15 @@ export default function BoardPage() {
                     fetch(`/api/tasks/${t.id}`, {
                       method: "PATCH",
                       headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ completed: !t.completed }),
+                      body: JSON.stringify({ completed: !t.completed_at }),
                     })
                       .then((res) => {
                         if (!res.ok) throw new Error(`HTTP ${res.status}`);
                         return res.json();
                       })
-                      .then(() => {
+                      .then((updated) => {
                         setInboxTasks((prev) =>
-                          prev.map((it) => (it.id === t.id ? { ...it, completed: !it.completed } : it))
+                          prev.map((it) => (it.id === t.id ? { ...it, completed_at: updated.completed_at } : it))
                         );
                       })
                       .catch((err) => setError(err.message));
@@ -1471,7 +1477,7 @@ export default function BoardPage() {
               <CardContent sx={{ py: 1.5, "&:last-child": { pb: 1.5 } }}>
                 <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
                   <IconButton size="small" sx={{ p: 0, flexShrink: 0 }}>
-                    {activeTask.completed ? (
+                    {activeTask.completed_at ? (
                       <CheckCircleIcon color="success" fontSize="small" />
                     ) : (
                       <RadioButtonUncheckedIcon

@@ -7,6 +7,8 @@ import {
   CardContent,
   Checkbox,
   Chip,
+  ClickAwayListener,
+  Collapse,
   IconButton,
   Stack,
   TextField,
@@ -17,6 +19,10 @@ import AddIcon from "@mui/icons-material/Add";
 import DeleteIcon from "@mui/icons-material/Delete";
 import UnarchiveIcon from "@mui/icons-material/Unarchive";
 import ArchiveIcon from "@mui/icons-material/Archive";
+import EditIcon from "@mui/icons-material/Edit";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
+import ExpandLessIcon from "@mui/icons-material/ExpandLess";
+import EventIcon from "@mui/icons-material/Event";
 
 type Project = {
   id: string;
@@ -29,7 +35,9 @@ type ProjectTask = {
   id: string;
   title: string;
   description: string | null;
-  completed: boolean;
+  scheduled_start: string | null;
+  scheduled_end: string | null;
+  completed_at: string | null;
   archived_at: string | null;
   board_id: string | null;
   board_name: string | null;
@@ -43,6 +51,10 @@ export default function ProjectDetail() {
   const [error, setError] = useState<string | null>(null);
   const [isAdding, setIsAdding] = useState(false);
   const [newTaskTitle, setNewTaskTitle] = useState("");
+  const [newTaskDescription, setNewTaskDescription] = useState("");
+  const [newTaskStartDate, setNewTaskStartDate] = useState("");
+  const [newTaskEndDate, setNewTaskEndDate] = useState("");
+  const [showAddDetails, setShowAddDetails] = useState(false);
 
   useEffect(() => {
     if (!projectId) return;
@@ -65,6 +77,15 @@ export default function ProjectDetail() {
       .catch((err) => setError(err.message));
   }, [projectId]);
 
+  const resetAddForm = () => {
+    setNewTaskTitle("");
+    setNewTaskDescription("");
+    setNewTaskStartDate("");
+    setNewTaskEndDate("");
+    setShowAddDetails(false);
+    setIsAdding(false);
+  };
+
   const handleAddTask = () => {
     if (!newTaskTitle.trim() || !projectId) return;
 
@@ -73,8 +94,10 @@ export default function ProjectDetail() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         title: newTaskTitle.trim(),
+        description: newTaskDescription.trim() || null,
+        scheduled_start: newTaskStartDate || null,
+        scheduled_end: newTaskEndDate || null,
         project_id: projectId,
-        // board_id は指定しない（未割り当て）
       }),
     })
       .then((res) => {
@@ -87,7 +110,9 @@ export default function ProjectDetail() {
             id: task.id,
             title: task.title,
             description: task.description,
-            completed: task.completed,
+            scheduled_start: task.scheduled_start,
+            scheduled_end: task.scheduled_end,
+            completed_at: task.completed_at,
             archived_at: null,
             board_id: null,
             board_name: null,
@@ -95,8 +120,35 @@ export default function ProjectDetail() {
           },
           ...prev,
         ]);
-        setNewTaskTitle("");
-        setIsAdding(false);
+        resetAddForm();
+      })
+      .catch((err) => setError(err.message));
+  };
+
+  const handleUpdateTask = (taskId: string, updates: Partial<ProjectTask>) => {
+    fetch(`/api/tasks/${taskId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(updates),
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then((updated) => {
+        setTasks((prev) =>
+          prev.map((t) =>
+            t.id === taskId
+              ? {
+                  ...t,
+                  title: updated.title,
+                  description: updated.description,
+                  scheduled_start: updated.scheduled_start,
+                  scheduled_end: updated.scheduled_end,
+                }
+              : t
+          )
+        );
       })
       .catch((err) => setError(err.message));
   };
@@ -111,9 +163,9 @@ export default function ProjectDetail() {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();
       })
-      .then(() => {
+      .then((updated) => {
         setTasks((prev) =>
-          prev.map((t) => (t.id === taskId ? { ...t, completed } : t))
+          prev.map((t) => (t.id === taskId ? { ...t, completed_at: updated.completed_at } : t))
         );
       })
       .catch((err) => setError(err.message));
@@ -214,26 +266,58 @@ export default function ProjectDetail() {
                   autoFocus
                   fullWidth
                   size="small"
-                  label="Task Title"
+                  label="タイトル"
                   value={newTaskTitle}
                   onChange={(e) => setNewTaskTitle(e.target.value)}
                   onKeyDown={(e) => {
-                    if (e.key === "Enter") handleAddTask();
-                    if (e.key === "Escape") {
-                      setIsAdding(false);
-                      setNewTaskTitle("");
-                    }
+                    if (e.key === "Enter" && !showAddDetails) handleAddTask();
+                    if (e.key === "Escape") resetAddForm();
                   }}
                 />
+                <Button
+                  size="small"
+                  startIcon={showAddDetails ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+                  onClick={() => setShowAddDetails(!showAddDetails)}
+                  sx={{ alignSelf: "flex-start" }}
+                >
+                  {showAddDetails ? "詳細を隠す" : "詳細を追加"}
+                </Button>
+                <Collapse in={showAddDetails}>
+                  <Stack spacing={2}>
+                    <TextField
+                      fullWidth
+                      size="small"
+                      label="説明"
+                      multiline
+                      minRows={2}
+                      value={newTaskDescription}
+                      onChange={(e) => setNewTaskDescription(e.target.value)}
+                    />
+                    <Box sx={{ display: "flex", gap: 2 }}>
+                      <TextField
+                        size="small"
+                        label="開始予定日"
+                        type="date"
+                        value={newTaskStartDate}
+                        onChange={(e) => setNewTaskStartDate(e.target.value)}
+                        slotProps={{ inputLabel: { shrink: true } }}
+                        sx={{ flex: 1 }}
+                      />
+                      <TextField
+                        size="small"
+                        label="終了予定日"
+                        type="date"
+                        value={newTaskEndDate}
+                        onChange={(e) => setNewTaskEndDate(e.target.value)}
+                        slotProps={{ inputLabel: { shrink: true } }}
+                        sx={{ flex: 1 }}
+                      />
+                    </Box>
+                  </Stack>
+                </Collapse>
                 <Box sx={{ display: "flex", gap: 1, justifyContent: "flex-end" }}>
-                  <Button
-                    size="small"
-                    onClick={() => {
-                      setIsAdding(false);
-                      setNewTaskTitle("");
-                    }}
-                  >
-                    Cancel
+                  <Button size="small" onClick={resetAddForm}>
+                    キャンセル
                   </Button>
                   <Button
                     size="small"
@@ -241,7 +325,7 @@ export default function ProjectDetail() {
                     onClick={handleAddTask}
                     disabled={!newTaskTitle.trim()}
                   >
-                    Add Task
+                    追加
                   </Button>
                 </Box>
               </Stack>
@@ -253,7 +337,7 @@ export default function ProjectDetail() {
             variant="outlined"
             onClick={() => setIsAdding(true)}
           >
-            Add Task
+            タスクを追加
           </Button>
         )}
       </Box>
@@ -272,6 +356,7 @@ export default function ProjectDetail() {
                 onToggleComplete={handleToggleComplete}
                 onDelete={handleDeleteTask}
                 onArchive={handleArchive}
+                onUpdate={handleUpdateTask}
               />
             ))}
           </Stack>
@@ -292,6 +377,7 @@ export default function ProjectDetail() {
                 onToggleComplete={handleToggleComplete}
                 onDelete={handleDeleteTask}
                 onArchive={handleArchive}
+                onUpdate={handleUpdateTask}
               />
             ))}
           </Stack>
@@ -312,6 +398,7 @@ export default function ProjectDetail() {
                 onToggleComplete={handleToggleComplete}
                 onDelete={handleDeleteTask}
                 onArchive={handleArchive}
+                onUpdate={handleUpdateTask}
                 isArchived
               />
             ))}
@@ -331,42 +418,183 @@ export default function ProjectDetail() {
   );
 }
 
+function formatDate(dateStr: string | null): string {
+  if (!dateStr) return "";
+  const date = new Date(dateStr);
+  return date.toLocaleDateString("ja-JP", { month: "short", day: "numeric" });
+}
+
 function TaskItem({
   task,
   onToggleComplete,
   onDelete,
   onArchive,
+  onUpdate,
   isArchived = false,
 }: {
   task: ProjectTask;
   onToggleComplete: (id: string, completed: boolean) => void;
   onDelete: (id: string) => void;
   onArchive: (id: string, archive: boolean) => void;
+  onUpdate: (id: string, updates: Partial<ProjectTask>) => void;
   isArchived?: boolean;
 }) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [editTitle, setEditTitle] = useState(task.title);
+  const [editDescription, setEditDescription] = useState(task.description || "");
+  const [editStartDate, setEditStartDate] = useState(task.scheduled_start || "");
+  const [editEndDate, setEditEndDate] = useState(task.scheduled_end || "");
+
+  const handleSave = () => {
+    if (!editTitle.trim()) return;
+    onUpdate(task.id, {
+      title: editTitle.trim(),
+      description: editDescription.trim() || null,
+      scheduled_start: editStartDate || null,
+      scheduled_end: editEndDate || null,
+    });
+    setIsEditing(false);
+  };
+
+  const handleCancel = () => {
+    setEditTitle(task.title);
+    setEditDescription(task.description || "");
+    setEditStartDate(task.scheduled_start || "");
+    setEditEndDate(task.scheduled_end || "");
+    setIsEditing(false);
+  };
+
+  const hasDateInfo = task.scheduled_start || task.scheduled_end;
+
+  if (isEditing) {
+    return (
+      <ClickAwayListener onClickAway={handleSave}>
+        <Card sx={{ maxWidth: 500 }}>
+          <CardContent>
+            <Stack spacing={2}>
+              <TextField
+                autoFocus
+                fullWidth
+                size="small"
+                label="タイトル"
+                value={editTitle}
+                onChange={(e) => setEditTitle(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") handleCancel();
+                }}
+              />
+              <TextField
+                fullWidth
+                size="small"
+                label="説明"
+                multiline
+                minRows={2}
+                value={editDescription}
+                onChange={(e) => setEditDescription(e.target.value)}
+              />
+              <Box sx={{ display: "flex", gap: 2 }}>
+                <TextField
+                  size="small"
+                  label="開始予定日"
+                  type="date"
+                  value={editStartDate}
+                  onChange={(e) => setEditStartDate(e.target.value)}
+                  slotProps={{ inputLabel: { shrink: true } }}
+                  sx={{ flex: 1 }}
+                />
+                <TextField
+                  size="small"
+                  label="終了予定日"
+                  type="date"
+                  value={editEndDate}
+                  onChange={(e) => setEditEndDate(e.target.value)}
+                  slotProps={{ inputLabel: { shrink: true } }}
+                  sx={{ flex: 1 }}
+                />
+              </Box>
+              <Box sx={{ display: "flex", gap: 1, justifyContent: "flex-end" }}>
+                <Button size="small" onClick={handleCancel}>
+                  キャンセル
+                </Button>
+                <Button
+                  size="small"
+                  variant="contained"
+                  onClick={handleSave}
+                  disabled={!editTitle.trim()}
+                >
+                  保存
+                </Button>
+              </Box>
+            </Stack>
+          </CardContent>
+        </Card>
+      </ClickAwayListener>
+    );
+  }
+
   return (
     <Card sx={{ maxWidth: 500, opacity: isArchived ? 0.6 : 1 }}>
       <CardContent sx={{ py: 1.5, "&:last-child": { pb: 1.5 } }}>
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+        <Box sx={{ display: "flex", alignItems: "flex-start", gap: 1 }}>
           <Checkbox
-            checked={task.completed}
+            checked={!!task.completed_at}
             onChange={(e) => onToggleComplete(task.id, e.target.checked)}
             size="small"
             disabled={isArchived}
+            sx={{ mt: -0.5 }}
           />
-          <Box sx={{ flex: 1, minWidth: 0 }}>
+          <Box
+            sx={{ flex: 1, minWidth: 0, cursor: "pointer" }}
+            onClick={() => !isArchived && setIsEditing(true)}
+          >
             <Typography
               sx={{
-                textDecoration: task.completed ? "line-through" : "none",
-                color: task.completed ? "text.secondary" : "text.primary",
+                textDecoration: task.completed_at ? "line-through" : "none",
+                color: task.completed_at ? "text.secondary" : "text.primary",
               }}
-              noWrap
             >
               {task.title}
             </Typography>
+            {task.description && (
+              <Typography
+                variant="body2"
+                color="text.secondary"
+                sx={{
+                  mt: 0.5,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  display: "-webkit-box",
+                  WebkitLineClamp: 2,
+                  WebkitBoxOrient: "vertical",
+                }}
+              >
+                {task.description}
+              </Typography>
+            )}
+            {hasDateInfo && (
+              <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, mt: 0.5 }}>
+                <EventIcon sx={{ fontSize: 14, color: "text.disabled" }} />
+                <Typography variant="caption" color="text.secondary">
+                  {task.scheduled_start && task.scheduled_end
+                    ? `${formatDate(task.scheduled_start)} 〜 ${formatDate(task.scheduled_end)}`
+                    : task.scheduled_start
+                      ? `開始: ${formatDate(task.scheduled_start)}`
+                      : `期限: ${formatDate(task.scheduled_end)}`}
+                </Typography>
+              </Box>
+            )}
           </Box>
           {task.board_name && (
             <Chip label={task.board_name} size="small" variant="outlined" />
+          )}
+          {!isArchived && (
+            <IconButton
+              size="small"
+              onClick={() => setIsEditing(true)}
+              title="編集"
+            >
+              <EditIcon fontSize="small" />
+            </IconButton>
           )}
           {isArchived ? (
             <IconButton
@@ -377,7 +605,7 @@ function TaskItem({
               <UnarchiveIcon fontSize="small" />
             </IconButton>
           ) : (
-            task.completed && (
+            task.completed_at && (
               <IconButton
                 size="small"
                 onClick={() => onArchive(task.id, true)}

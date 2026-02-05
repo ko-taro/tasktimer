@@ -100,7 +100,9 @@ class ProjectTaskResponse(BaseModel):
     id: str
     title: str
     description: str | None
-    completed: bool
+    scheduled_start: str | None = None
+    scheduled_end: str | None = None
+    completed_at: str | None = None
     archived_at: str | None = None
     board_id: str | None = None
     board_name: str | None = None
@@ -132,7 +134,8 @@ def list_project_tasks(project_id: str) -> list[ProjectTaskResponse]:
         # タスク一覧を取得（board_tasks との LEFT JOIN で未割り当ても含む）
         # アーカイブ済みも含めて取得（UIでフィルタリング）
         cur.execute("""
-            SELECT t.id, t.title, t.description, t.completed, t.archived_at,
+            SELECT t.id, t.title, t.description,
+                   t.scheduled_start, t.scheduled_end, t.completed_at, t.archived_at,
                    bt.board_id, b.label AS board_name, bt.sort_order
             FROM tasks t
             LEFT JOIN board_tasks bt ON t.id = bt.task_id
@@ -143,12 +146,17 @@ def list_project_tasks(project_id: str) -> list[ProjectTaskResponse]:
 
         results = []
         for row in cur.fetchall():
+            scheduled_start = row.get("scheduled_start")
+            scheduled_end = row.get("scheduled_end")
+            completed_at = row.get("completed_at")
             archived_at = row.get("archived_at")
             results.append(ProjectTaskResponse(
                 id=str(row["id"]),
                 title=row["title"],
                 description=row["description"],
-                completed=row["completed"],
+                scheduled_start=scheduled_start.isoformat() if scheduled_start else None,
+                scheduled_end=scheduled_end.isoformat() if scheduled_end else None,
+                completed_at=completed_at.isoformat() if completed_at else None,
                 archived_at=archived_at.isoformat() if archived_at else None,
                 board_id=str(row["board_id"]) if row["board_id"] else None,
                 board_name=row["board_name"],
