@@ -22,6 +22,7 @@ class TaskResponse(BaseModel):
     board_id: str
     sort_order: int
     completed: bool
+    archived_at: str | None
     project: ProjectInfo | None
 
 
@@ -31,6 +32,7 @@ class UnassignedTaskResponse(BaseModel):
     title: str
     description: str | None
     completed: bool
+    archived_at: str | None
     project: ProjectInfo | None
 
 
@@ -48,6 +50,7 @@ class TaskUpdate(BaseModel):
     sort_order: int | None = None
     completed: bool | None = None
     project_id: str | None = None
+    archived: bool | None = None
 
 
 def _row_to_task(row: Any) -> TaskResponse:
@@ -59,6 +62,7 @@ def _row_to_task(row: Any) -> TaskResponse:
             short_name=row["project_short_name"],
             color=row["project_color"],
         )
+    archived_at = row.get("archived_at")
     return TaskResponse(
         id=str(row["id"]),
         title=row["title"],
@@ -66,6 +70,7 @@ def _row_to_task(row: Any) -> TaskResponse:
         board_id=str(row["board_id"]),
         sort_order=row["sort_order"],
         completed=row["completed"],
+        archived_at=archived_at.isoformat() if archived_at else None,
         project=project,
     )
 
@@ -74,7 +79,7 @@ def _row_to_task(row: Any) -> TaskResponse:
 def list_tasks() -> list[TaskResponse]:
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute("""
-            SELECT t.id, t.title, t.description, t.completed,
+            SELECT t.id, t.title, t.description, t.completed, t.archived_at,
                    bt.board_id, bt.sort_order,
                    p.id AS project_id, p.name AS project_name,
                    p.short_name AS project_short_name, p.color AS project_color
@@ -82,6 +87,7 @@ def list_tasks() -> list[TaskResponse]:
             JOIN board_tasks bt ON t.id = bt.task_id
             JOIN boards b ON bt.board_id = b.id
             LEFT JOIN projects p ON t.project_id = p.id
+            WHERE t.archived_at IS NULL
             ORDER BY b.sort_order, bt.sort_order
         """)
         return [_row_to_task(row) for row in cur.fetchall()]
@@ -92,13 +98,13 @@ def list_unassigned_tasks() -> list[UnassignedTaskResponse]:
     """ボードに割り当てられていないタスク一覧を取得"""
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute("""
-            SELECT t.id, t.title, t.description, t.completed,
+            SELECT t.id, t.title, t.description, t.completed, t.archived_at,
                    p.id AS project_id, p.name AS project_name,
                    p.short_name AS project_short_name, p.color AS project_color
             FROM tasks t
             LEFT JOIN board_tasks bt ON t.id = bt.task_id
             LEFT JOIN projects p ON t.project_id = p.id
-            WHERE bt.task_id IS NULL
+            WHERE bt.task_id IS NULL AND t.archived_at IS NULL
             ORDER BY t.created_at DESC
         """)
         results = []
@@ -111,11 +117,13 @@ def list_unassigned_tasks() -> list[UnassignedTaskResponse]:
                     short_name=row["project_short_name"],
                     color=row["project_color"],
                 )
+            archived_at = row.get("archived_at")
             results.append(UnassignedTaskResponse(
                 id=str(row["id"]),
                 title=row["title"],
                 description=row["description"],
                 completed=row["completed"],
+                archived_at=archived_at.isoformat() if archived_at else None,
                 project=project,
             ))
         return results
@@ -177,6 +185,7 @@ def create_task(body: TaskCreate) -> TaskResponse | UnassignedTaskResponse:
                 board_id=body.board_id,
                 sort_order=next_order,
                 completed=task_row["completed"],
+                archived_at=None,
                 project=project,
             )
         else:
@@ -187,6 +196,7 @@ def create_task(body: TaskCreate) -> TaskResponse | UnassignedTaskResponse:
                 title=task_row["title"],
                 description=task_row["description"],
                 completed=task_row["completed"],
+                archived_at=None,
                 project=project,
             )
 
@@ -198,20 +208,40 @@ def update_task(task_id: str, body: TaskUpdate) -> TaskResponse | UnassignedTask
         raise HTTPException(status_code=400, detail="No fields to update")
 
     with get_conn() as conn, conn.cursor() as cur:
+        # archived フラグの処理（archived_at への変換）
+        archived_clause = ""
+        if "archived" in update_data:
+            archived = update_data.pop("archived")
+            if archived:
+                archived_clause = ", archived_at = CURRENT_TIMESTAMP"
+            else:
+                archived_clause = ", archived_at = NULL"
+
         # tasks テーブルの更新
         task_fields = {k: v for k, v in update_data.items() if k in ("title", "description", "completed", "project_id")}
-        if task_fields:
-            set_clause = ", ".join(f"{k} = %s" for k in task_fields)
-            values = list(task_fields.values())
-            values.append(task_id)
-            cur.execute(
-                f"""
-                    UPDATE tasks
-                    SET {set_clause}, updated_at = CURRENT_TIMESTAMP
-                    WHERE id = %s
-                """,
-                values,
-            )
+        if task_fields or archived_clause:
+            if task_fields:
+                set_clause = ", ".join(f"{k} = %s" for k in task_fields)
+                values = list(task_fields.values())
+                values.append(task_id)
+                cur.execute(
+                    f"""
+                        UPDATE tasks
+                        SET {set_clause}{archived_clause}, updated_at = CURRENT_TIMESTAMP
+                        WHERE id = %s
+                    """,
+                    values,
+                )
+            else:
+                # archived のみ更新の場合
+                cur.execute(
+                    f"""
+                        UPDATE tasks
+                        SET updated_at = CURRENT_TIMESTAMP{archived_clause}
+                        WHERE id = %s
+                    """,
+                    (task_id,),
+                )
 
         # board_tasks の更新（board_id または sort_order が変更された場合）
         if "board_id" in update_data or "sort_order" in update_data:
@@ -247,7 +277,7 @@ def update_task(task_id: str, body: TaskUpdate) -> TaskResponse | UnassignedTask
 
         # 更新後のデータを取得して返す（LEFT JOINで未割り当てタスクにも対応）
         cur.execute("""
-            SELECT t.id, t.title, t.description, t.completed,
+            SELECT t.id, t.title, t.description, t.completed, t.archived_at,
                    bt.board_id, bt.sort_order,
                    p.id AS project_id, p.name AS project_name,
                    p.short_name AS project_short_name, p.color AS project_color
@@ -270,11 +300,13 @@ def update_task(task_id: str, body: TaskUpdate) -> TaskResponse | UnassignedTask
                     short_name=row["project_short_name"],
                     color=row["project_color"],
                 )
+            archived_at = row.get("archived_at")
             return UnassignedTaskResponse(
                 id=str(row["id"]),
                 title=row["title"],
                 description=row["description"],
                 completed=row["completed"],
+                archived_at=archived_at.isoformat() if archived_at else None,
                 project=project,
             )
 
@@ -381,7 +413,7 @@ def reorder_task(task_id: str, body: TaskReorder) -> TaskResponse:
 
         # 更新後のデータを取得して返す
         cur.execute("""
-            SELECT t.id, t.title, t.description, t.completed,
+            SELECT t.id, t.title, t.description, t.completed, t.archived_at,
                    bt.board_id, bt.sort_order,
                    p.id AS project_id, p.name AS project_name,
                    p.short_name AS project_short_name, p.color AS project_color

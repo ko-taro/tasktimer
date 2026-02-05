@@ -15,6 +15,8 @@ import {
 import ArrowBackIcon from "@mui/icons-material/ArrowBack";
 import AddIcon from "@mui/icons-material/Add";
 import DeleteIcon from "@mui/icons-material/Delete";
+import UnarchiveIcon from "@mui/icons-material/Unarchive";
+import ArchiveIcon from "@mui/icons-material/Archive";
 
 type Project = {
   id: string;
@@ -28,6 +30,7 @@ type ProjectTask = {
   title: string;
   description: string | null;
   completed: boolean;
+  archived_at: string | null;
   board_id: string | null;
   board_name: string | null;
   sort_order: number | null;
@@ -124,6 +127,26 @@ export default function ProjectDetail() {
       .catch((err) => setError(err.message));
   };
 
+  const handleArchive = (taskId: string, archive: boolean) => {
+    fetch(`/api/tasks/${taskId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ archived: archive }),
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then((updated) => {
+        setTasks((prev) =>
+          prev.map((t) =>
+            t.id === taskId ? { ...t, archived_at: updated.archived_at } : t
+          )
+        );
+      })
+      .catch((err) => setError(err.message));
+  };
+
   if (error) {
     return (
       <Box sx={{ mt: 4, textAlign: "center" }}>
@@ -141,8 +164,10 @@ export default function ProjectDetail() {
     );
   }
 
-  const unassignedTasks = tasks.filter((t) => !t.board_id);
-  const assignedTasks = tasks.filter((t) => t.board_id);
+  const activeTasks = tasks.filter((t) => !t.archived_at);
+  const archivedTasks = tasks.filter((t) => t.archived_at);
+  const unassignedTasks = activeTasks.filter((t) => !t.board_id);
+  const assignedTasks = activeTasks.filter((t) => t.board_id);
 
   return (
     <Box>
@@ -245,6 +270,7 @@ export default function ProjectDetail() {
                 task={task}
                 onToggleComplete={handleToggleComplete}
                 onDelete={handleDeleteTask}
+                onArchive={handleArchive}
               />
             ))}
           </Stack>
@@ -253,7 +279,7 @@ export default function ProjectDetail() {
 
       {/* Assigned Tasks */}
       {assignedTasks.length > 0 && (
-        <Box>
+        <Box sx={{ mb: 4 }}>
           <Typography variant="subtitle1" fontWeight="bold" sx={{ mb: 1 }}>
             On Board
           </Typography>
@@ -264,6 +290,28 @@ export default function ProjectDetail() {
                 task={task}
                 onToggleComplete={handleToggleComplete}
                 onDelete={handleDeleteTask}
+                onArchive={handleArchive}
+              />
+            ))}
+          </Stack>
+        </Box>
+      )}
+
+      {/* Archived Tasks */}
+      {archivedTasks.length > 0 && (
+        <Box sx={{ mb: 4 }}>
+          <Typography variant="subtitle1" fontWeight="bold" sx={{ mb: 1, color: "text.secondary" }}>
+            Archived ({archivedTasks.length})
+          </Typography>
+          <Stack spacing={1}>
+            {archivedTasks.map((task) => (
+              <TaskItem
+                key={task.id}
+                task={task}
+                onToggleComplete={handleToggleComplete}
+                onDelete={handleDeleteTask}
+                onArchive={handleArchive}
+                isArchived
               />
             ))}
           </Stack>
@@ -271,7 +319,7 @@ export default function ProjectDetail() {
       )}
 
       {/* Empty State */}
-      {tasks.length === 0 && (
+      {activeTasks.length === 0 && archivedTasks.length === 0 && (
         <Box sx={{ textAlign: "center", py: 4 }}>
           <Typography color="text.secondary">
             No tasks yet. Add your first task!
@@ -286,19 +334,24 @@ function TaskItem({
   task,
   onToggleComplete,
   onDelete,
+  onArchive,
+  isArchived = false,
 }: {
   task: ProjectTask;
   onToggleComplete: (id: string, completed: boolean) => void;
   onDelete: (id: string) => void;
+  onArchive: (id: string, archive: boolean) => void;
+  isArchived?: boolean;
 }) {
   return (
-    <Card sx={{ maxWidth: 500 }}>
+    <Card sx={{ maxWidth: 500, opacity: isArchived ? 0.6 : 1 }}>
       <CardContent sx={{ py: 1.5, "&:last-child": { pb: 1.5 } }}>
         <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
           <Checkbox
             checked={task.completed}
             onChange={(e) => onToggleComplete(task.id, e.target.checked)}
             size="small"
+            disabled={isArchived}
           />
           <Box sx={{ flex: 1, minWidth: 0 }}>
             <Typography
@@ -313,6 +366,25 @@ function TaskItem({
           </Box>
           {task.board_name && (
             <Chip label={task.board_name} size="small" variant="outlined" />
+          )}
+          {isArchived ? (
+            <IconButton
+              size="small"
+              onClick={() => onArchive(task.id, false)}
+              title="アーカイブ解除"
+            >
+              <UnarchiveIcon fontSize="small" />
+            </IconButton>
+          ) : (
+            task.completed && (
+              <IconButton
+                size="small"
+                onClick={() => onArchive(task.id, true)}
+                title="アーカイブ"
+              >
+                <ArchiveIcon fontSize="small" />
+              </IconButton>
+            )
           )}
           <IconButton size="small" onClick={() => onDelete(task.id)}>
             <DeleteIcon fontSize="small" />

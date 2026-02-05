@@ -17,6 +17,7 @@ import AddIcon from "@mui/icons-material/Add";
 import RadioButtonUncheckedIcon from "@mui/icons-material/RadioButtonUnchecked";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import DeleteIcon from "@mui/icons-material/Delete";
+import ArchiveIcon from "@mui/icons-material/Archive";
 import DragIndicatorIcon from "@mui/icons-material/DragIndicator";
 import DragHandleIcon from "@mui/icons-material/DragHandle";
 import {
@@ -54,6 +55,7 @@ type Task = {
   board_id: string;
   sort_order: number;
   completed: boolean;
+  archived_at: string | null;
   project: Project | null;
 };
 
@@ -62,6 +64,7 @@ type InboxTask = {
   title: string;
   description: string | null;
   completed: boolean;
+  archived_at: string | null;
   project: Project | null;
 };
 
@@ -178,6 +181,7 @@ function DraggableCard({
   onUpdateDescription,
   onToggleCompleted,
   onDelete,
+  onArchive,
   showIndicator,
 }: {
   task: Task;
@@ -185,6 +189,7 @@ function DraggableCard({
   onUpdateDescription: (taskId: string, description: string) => void;
   onToggleCompleted: (task: Task) => void;
   onDelete: (task: Task) => void;
+  onArchive: (task: Task) => void;
   showIndicator?: "before" | "after" | null;
 }) {
   const [isExpanded, setIsExpanded] = useState(false);
@@ -344,16 +349,31 @@ function DraggableCard({
               </Typography>
             </Box>
           )}
-          <IconButton
-            size="small"
-            onClick={(e) => {
-              e.stopPropagation();
-              onDelete(task);
-            }}
-            sx={{ flexShrink: 0, p: 0, ml: "auto" }}
-          >
-            <DeleteIcon fontSize="small" sx={{ color: "text.disabled" }} />
-          </IconButton>
+          <Box sx={{ display: "flex", alignItems: "center", ml: "auto", flexShrink: 0 }}>
+            {task.completed && (
+              <IconButton
+                size="small"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onArchive(task);
+                }}
+                sx={{ p: 0 }}
+                title="アーカイブ"
+              >
+                <ArchiveIcon fontSize="small" sx={{ color: "text.disabled" }} />
+              </IconButton>
+            )}
+            <IconButton
+              size="small"
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete(task);
+              }}
+              sx={{ p: 0 }}
+            >
+              <DeleteIcon fontSize="small" sx={{ color: "text.disabled" }} />
+            </IconButton>
+          </Box>
         </Box>
         {isExpanded && (
           <Box sx={{ mt: 1.5, pl: 4.5 }}>
@@ -602,6 +622,23 @@ export default function BoardPage() {
         setTasks((prev) =>
           prev.map((t) => (t.id === updated.id ? updated : t))
         );
+      })
+      .catch((err) => setError(err.message));
+  };
+
+  const handleArchive = (task: Task) => {
+    fetch(`/api/tasks/${task.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ archived: true }),
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then(() => {
+        // アーカイブされたタスクをリストから削除
+        setTasks((prev) => prev.filter((t) => t.id !== task.id));
       })
       .catch((err) => setError(err.message));
   };
@@ -1052,6 +1089,7 @@ export default function BoardPage() {
                           onUpdateDescription={handleUpdateDescription}
                           onToggleCompleted={handleToggleCompleted}
                           onDelete={handleDelete}
+                          onArchive={handleArchive}
                           showIndicator={
                             taskDropIndicator?.taskId === task.id
                               ? taskDropIndicator.position

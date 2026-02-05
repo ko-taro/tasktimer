@@ -101,6 +101,7 @@ class ProjectTaskResponse(BaseModel):
     title: str
     description: str | None
     completed: bool
+    archived_at: str | None = None
     board_id: str | None = None
     board_name: str | None = None
     sort_order: int | None = None
@@ -129,25 +130,28 @@ def list_project_tasks(project_id: str) -> list[ProjectTaskResponse]:
             raise HTTPException(status_code=404, detail="Project not found")
 
         # タスク一覧を取得（board_tasks との LEFT JOIN で未割り当ても含む）
+        # アーカイブ済みも含めて取得（UIでフィルタリング）
         cur.execute("""
-            SELECT t.id, t.title, t.description, t.completed,
+            SELECT t.id, t.title, t.description, t.completed, t.archived_at,
                    bt.board_id, b.label AS board_name, bt.sort_order
             FROM tasks t
             LEFT JOIN board_tasks bt ON t.id = bt.task_id
             LEFT JOIN boards b ON bt.board_id = b.id
             WHERE t.project_id = %s
-            ORDER BY t.created_at DESC
+            ORDER BY t.archived_at NULLS FIRST, t.created_at DESC
         """, (project_id,))
 
-        return [
-            ProjectTaskResponse(
+        results = []
+        for row in cur.fetchall():
+            archived_at = row.get("archived_at")
+            results.append(ProjectTaskResponse(
                 id=str(row["id"]),
                 title=row["title"],
                 description=row["description"],
                 completed=row["completed"],
+                archived_at=archived_at.isoformat() if archived_at else None,
                 board_id=str(row["board_id"]) if row["board_id"] else None,
                 board_name=row["board_name"],
                 sort_order=row["sort_order"],
-            )
-            for row in cur.fetchall()
-        ]
+            ))
+        return results
